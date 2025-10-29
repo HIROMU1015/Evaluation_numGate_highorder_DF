@@ -291,8 +291,9 @@ def load_data(file_name):
         data = pickle.load(f)
     return data
 
-def label_replace(labelkey):
-    replacedir = {'4th(new_2)':'4th (new_2)', '4th(new_3)':'4th (new_3)','8th(Morales)':'8th (Morales et al.)','10th(Morales)':'10th (Morales et al.)','8th(Yoshida)':'8th (Yoshida)'
+def label_replace(labelkey): # 凡例用
+    replacedir = {
+        '4th(new_2)':'4th (new_2)', '4th(new_3)':'4th (new_3)','8th(Morales)':'8th (Morales et al.)','10th(Morales)':'10th (Morales et al.)','8th(Yoshida)':'8th (Yoshida)'
                   }
     if labelkey in replacedir.keys():
         labelkey = replacedir[labelkey]
@@ -469,12 +470,13 @@ def calculation_cost(clique_list, num_w,ham_name):
 
     return total_exp,clique_num_dir
 
-
+# calculation_cost() による H-chain の PF ごとのパウリローテーションの個数
 decompo_num = {'H2': {'8th(Yoshida)': 220, '2nd': 24, '4th': 52, '8th(Morales)': 248, '10th(Morales)': 472, '4th(new_3)': 108, '4th(new_2)': 80, '4(new_1)': 52, '6(new_3)': 108}, 'H3': {'8th(Yoshida)': 1476, '2nd': 118, '4th': 312, '8th(Morales)': 1670, '10th(Morales)': 3222, '4th(new_3)': 700, '4th(new_2)': 506, '4(new_1)': 312, '6(new_3)': 700}, 'H4': {'8th(Yoshida)': 5436, '2nd': 396, '4th': 1116, '8th(Morales)': 6156, '10th(Morales)': 11916, '4th(new_3)': 2556, '4th(new_2)': 1836, '4(new_1)': 1116, '6(new_3)': 2556}, 'H5': {'8th(Yoshida)': 14200, '2nd': 998, '4th': 2884, '8th(Morales)': 16086, '10th(Morales)': 31174, '4th(new_3)': 6656, '4th(new_2)': 4770, '4(new_1)': 2884, '6(new_3)': 6656}, 'H6': {'8th(Yoshida)': 30648, '2nd': 2116, '4th': 6192, '8th(Morales)': 34724, '10th(Morales)': 67332, '4th(new_3)': 14344, '4th(new_2)': 10268, '4(new_1)': 6192, '6(new_3)': 14344}, 'H7': {'8th(Yoshida)': 58920, '2nd': 4026, '4th': 11868, '8th(Morales)': 66762, '10th(Morales)': 129498, '4th(new_3)': 27552, '4th(new_2)': 19710, '4(new_1)': 11868, '6(new_3)': 27552}, 'H8': {'8th(Yoshida)': 102556, '2nd': 6964, '4th': 20620, '8th(Morales)': 116212, '10th(Morales)': 225460, '4th(new_3)': 47932, '4th(new_2)': 34276, '4(new_1)': 20620, '6(new_3)': 47932}, 'H9': {'8th(Yoshida)': 170016, '2nd': 11494, '4th': 34140, '8th(Morales)': 192662, '10th(Morales)': 373830, '4th(new_3)': 79432, '4th(new_2)': 56786, '4(new_1)': 34140, '6(new_3)': 79432}, 'H10': {'8th(Yoshida)': 261960, '2nd': 17660, '4th': 52560, '8th(Morales)': 296860, '10th(Morales)': 576060, '4th(new_3)': 122360, '4th(new_2)': 87460, '4(new_1)': 52560, '6(new_3)': 122360}, 'H11': {'8th(Yoshida)': 385648, '2nd': 25946, '4th': 77332, '8th(Morales)': 437034, '10th(Morales)': 848122, '4th(new_3)': 180104, '4th(new_2)': 128718, '4(new_1)': 77332, '6(new_3)': 180104}, 'H12': {'8th(Yoshida)': 550620, '2nd': 36988, '4th': 110364, '8th(Morales)': 623996, '10th(Morales)': 1211004, '4th(new_3)': 257116, '4th(new_2)': 183740, '4(new_1)': 110364, '6(new_3)': 257116}, 'H13': {'8th(Yoshida)': 767016, '2nd': 51462, '4th': 153684, '8th(Morales)': 869238, '10th(Morales)': 1687014, '4th(new_3)': 358128, '4th(new_2)': 255906, '4(new_1)': 153684, '6(new_3)': 358128}, 'H14': {'8th(Yoshida)': 1037656, '2nd': 69556, '4th': 207856, '8th(Morales)': 1175956, '10th(Morales)': 2282356, '4th(new_3)': 484456, '4th(new_2)': 346156, '4(new_1)': 207856, '6(new_3)': 484456}, 'H15': {'8th(Yoshida)': 1385520, '2nd': 92802, '4th': 277476, '8th(Morales)': 1570194, '10th(Morales)': 3047586, '4th(new_3)': 646824, '4th(new_2)': 462150, '4(new_1)': 277476, '6(new_3)': 646824}}
 
 color_map = {'2nd':'g','4th(new_3)':'r','4th(new_1)':'lightcoral','4th(new_2)':'b','6th(new_4)':'darkgreen','4th':'c', '8th(Morales)':'m', '10th(Morales)':'greenyellow', '8th(Yoshida)':'orange'}
 marker_map = {'2nd':'o','4th(new_3)':'v','4th(new_1)':'lightcoral','4th(new_2)':'b','6th(new_4)':'darkgreen','4th':'^', '8th(Morales)':'h', '10th(Morales et al.)':'H', '8th(Yoshida)':'>'}
 
+# PF の次数
 p_dir = {"6th(new_4)":6,"6th(new_3)":6,"4th(new_1)":4,"4th(new_2)":4,"4th(new_3)":4,"2nd":2,"4th":4,"8th(Morales)":8,"10th(Morales)":10,'8th(Yoshida)':8}
 
 def exp_extrapolation(Hchain, n_w_list, show_bands=True, band_height=0.06, band_alpha=0.28):

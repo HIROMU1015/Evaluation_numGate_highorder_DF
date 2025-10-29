@@ -25,9 +25,7 @@ from pyscf.fci import cistring
 import trotter_error_plt as tsag
 from Almost_optimal_grouping import Almost_optimal_grouper
 
-# =========================
-# 設定セクション（魔法値の定数化）
-# =========================
+
 AER_METHOD_STATEVECTOR = "statevector"  # AerSimulator の method
 DEFAULT_BASIS = "sto-3g"  # PySCF 基底関数
 
@@ -46,12 +44,9 @@ def free_var(name: str, scope: dict) -> None:
         gc.collect()
 
 
-# ※ Initialize ゲートは使用せず、シミュレーター側の初期状態指定/Statevector.evolve を用いる
-
-
 def apply_time_evolution(eigenvector: np.ndarray, time_evolution_circuit: QuantumCircuit) -> Statevector:
     """|ψ⟩ を初期化せず、Statevector.evolve で時間発展させた最終状態を返す。"""
-    # 低リスク高速化: Initializeやトランスパイル/実行を介さず、理想状態ベクトル演算を使用
+    # initialize 不使用
     sv = Statevector(eigenvector)
     final_sv = sv.evolve(time_evolution_circuit)
     return final_sv
