@@ -46,321 +46,26 @@ PICKLE_DIR_GROUPED = "trotter_expo_coeff_gr"
 POOL_PROCESSES = 32  # 並列処理プロセス数（挙動は不変）
 
 
-def call_geometry(mol_type: str, distance: float):
-    """分子式と距離から原子配置・スピン多重度・電荷を返す。"""
+def call_geometry(Hchain, distance):
+    if Hchain < 2:
+        raise ValueError("Hchain must be >= 2")
 
-    def HF(distance):
+    # multiplicity と charge の規則
+    if Hchain % 2 == 0:
         multiplicity = 1
         charge = 0
-        geometry = [("H", (0, 0, 0)), ("F", (0, 0, distance))]
-        return geometry, multiplicity, charge
-
-    def H2(distance):
-        multiplicity = 1
-        charge = 0
-        geometry = [("H", (0, 0, distance * (-0.5))), ("H", (0, 0, distance * (0.5)))]
-        return geometry, multiplicity, charge
-
-    def H3(distance):
+    else:
         multiplicity = 3
         charge = +1
-        geometry = [("H", (0, 0, distance * (-1))), ("H", (0, 0, 0)), ("H", (0, 0, distance * (1)))]
-        return geometry, multiplicity, charge
 
-    def H4(distance):
-        multiplicity = 1
-        charge = 0
-        geometry = [
-            ("H", (0, 0, distance * (-1.5))),
-            ("H", (0, 0, distance * (-0.5))),
-            ("H", (0, 0, distance * (0.5))),
-            ("H", (0, 0, distance * (1.5))),
-        ]
-        return geometry, multiplicity, charge
+    shift = (Hchain - 1) / 2.0
 
-    def H5(distance):
-        multiplicity = 3
-        charge = +1
-        geometry = [
-            ("H", (0, 0, distance * (-2))),
-            ("H", (0, 0, distance * (-1))),
-            ("H", (0, 0, 0)),
-            ("H", (0, 0, distance * (1))),
-            ("H", (0, 0, distance * (2))),
-        ]
-        return geometry, multiplicity, charge
+    geometry = [
+        ("H", (0.0, 0.0, distance * (i - shift)))
+        for i in range(Hchain)
+    ]
 
-    def H6(distance):
-        multiplicity = 1
-        charge = 0
-        geometry = [
-            ("H", (0, 0, distance * (-2.5))),
-            ("H", (0, 0, distance * (-1.5))),
-            ("H", (0, 0, distance * (-0.5))),
-            ("H", (0, 0, distance * (0.5))),
-            ("H", (0, 0, distance * (1.5))),
-            ("H", (0, 0, distance * (2.5))),
-        ]
-        return geometry, multiplicity, charge
-
-    def H7(distance):
-        multiplicity = 3
-        charge = +1
-        geometry = [
-            ("H", (0, 0, distance * (-3))),
-            ("H", (0, 0, distance * (-2))),
-            ("H", (0, 0, distance * (-1))),
-            ("H", (0, 0, 0)),
-            ("H", (0, 0, distance * (1))),
-            ("H", (0, 0, distance * (2))),
-            ("H", (0, 0, distance * (3))),
-        ]
-        return geometry, multiplicity, charge
-
-    def H8(distance):
-        multiplicity = 1
-        charge = 0
-        geometry = [
-            ("H", (0, 0, distance * (-3.5))),
-            ("H", (0, 0, distance * (-2.5))),
-            ("H", (0, 0, distance * (-1.5))),
-            ("H", (0, 0, distance * (-0.5))),
-            ("H", (0, 0, distance * (0.5))),
-            ("H", (0, 0, distance * (1.5))),
-            ("H", (0, 0, distance * (2.5))),
-            ("H", (0, 0, distance * (3.5))),
-        ]
-        return geometry, multiplicity, charge
-
-    def H9(distance):
-        multiplicity = 3
-        charge = +1
-        geometry = [
-            ("H", (0, 0, distance * (-4))),
-            ("H", (0, 0, distance * (-3))),
-            ("H", (0, 0, distance * (-2))),
-            ("H", (0, 0, distance * (-1))),
-            ("H", (0, 0, 0)),
-            ("H", (0, 0, distance * (1))),
-            ("H", (0, 0, distance * (2))),
-            ("H", (0, 0, distance * (3))),
-            ("H", (0, 0, distance * (4))),
-        ]
-        return geometry, multiplicity, charge
-
-    def H10(distance):
-        multiplicity = 1
-        charge = 0
-        geometry = [
-            ("H", (0, 0, distance * (-4.5))),
-            ("H", (0, 0, distance * (-3.5))),
-            ("H", (0, 0, distance * (-2.5))),
-            ("H", (0, 0, distance * (-1.5))),
-            ("H", (0, 0, distance * (-0.5))),
-            ("H", (0, 0, distance * (0.5))),
-            ("H", (0, 0, distance * (1.5))),
-            ("H", (0, 0, distance * (2.5))),
-            ("H", (0, 0, distance * (3.5))),
-            ("H", (0, 0, distance * (4.5))),
-        ]
-        return geometry, multiplicity, charge
-
-    def H11(distance):
-        multiplicity = 3
-        charge = +1
-        geometry = [
-            ("H", (0, 0, distance * (-5))),
-            ("H", (0, 0, distance * (-4))),
-            ("H", (0, 0, distance * (-3))),
-            ("H", (0, 0, distance * (-2))),
-            ("H", (0, 0, distance * (-1))),
-            ("H", (0, 0, 0)),
-            ("H", (0, 0, distance * (1))),
-            ("H", (0, 0, distance * (2))),
-            ("H", (0, 0, distance * (3))),
-            ("H", (0, 0, distance * (4))),
-            ("H", (0, 0, distance * (5))),
-        ]
-        return geometry, multiplicity, charge
-
-    def H12(distance):
-        multiplicity = 1
-        charge = 0
-        geometry = [
-            ("H", (0, 0, distance * (-5.5))),
-            ("H", (0, 0, distance * (-4.5))),
-            ("H", (0, 0, distance * (-3.5))),
-            ("H", (0, 0, distance * (-2.5))),
-            ("H", (0, 0, distance * (-1.5))),
-            ("H", (0, 0, distance * (-0.5))),
-            ("H", (0, 0, distance * (0.5))),
-            ("H", (0, 0, distance * (1.5))),
-            ("H", (0, 0, distance * (2.5))),
-            ("H", (0, 0, distance * (3.5))),
-            ("H", (0, 0, distance * (4.5))),
-            ("H", (0, 0, distance * (5.5))),
-        ]
-        return geometry, multiplicity, charge
-
-    def H13(distance):
-        multiplicity = 3
-        charge = +1
-        geometry = [
-            ("H", (0, 0, distance * (-6))),
-            ("H", (0, 0, distance * (-5))),
-            ("H", (0, 0, distance * (-4))),
-            ("H", (0, 0, distance * (-3))),
-            ("H", (0, 0, distance * (-2))),
-            ("H", (0, 0, distance * (-1))),
-            ("H", (0, 0, 0)),
-            ("H", (0, 0, distance * (1))),
-            ("H", (0, 0, distance * (2))),
-            ("H", (0, 0, distance * (3))),
-            ("H", (0, 0, distance * (4))),
-            ("H", (0, 0, distance * (5))),
-            ("H", (0, 0, distance * (6))),
-        ]
-        return geometry, multiplicity, charge
-
-    def H14(distance):
-        multiplicity = 1
-        charge = 0
-        geometry = [
-            ("H", (0, 0, distance * (-6.5))),
-            ("H", (0, 0, distance * (-5.5))),
-            ("H", (0, 0, distance * (-4.5))),
-            ("H", (0, 0, distance * (-3.5))),
-            ("H", (0, 0, distance * (-2.5))),
-            ("H", (0, 0, distance * (-1.5))),
-            ("H", (0, 0, distance * (-0.5))),
-            ("H", (0, 0, distance * (0.5))),
-            ("H", (0, 0, distance * (1.5))),
-            ("H", (0, 0, distance * (2.5))),
-            ("H", (0, 0, distance * (3.5))),
-            ("H", (0, 0, distance * (4.5))),
-            ("H", (0, 0, distance * (5.5))),
-            ("H", (0, 0, distance * (6.5))),
-        ]
-        return geometry, multiplicity, charge
-
-    def H15(distance):
-        multiplicity = 3
-        charge = +1
-        geometry = [
-            ("H", (0, 0, distance * (-7))),
-            ("H", (0, 0, distance * (-6))),
-            ("H", (0, 0, distance * (-5))),
-            ("H", (0, 0, distance * (-4))),
-            ("H", (0, 0, distance * (-3))),
-            ("H", (0, 0, distance * (-2))),
-            ("H", (0, 0, distance * (-1))),
-            ("H", (0, 0, 0)),
-            ("H", (0, 0, distance * (1))),
-            ("H", (0, 0, distance * (2))),
-            ("H", (0, 0, distance * (3))),
-            ("H", (0, 0, distance * (4))),
-            ("H", (0, 0, distance * (5))),
-            ("H", (0, 0, distance * (6))),
-            ("H", (0, 0, distance * (7))),
-        ]
-        return geometry, multiplicity, charge
-
-    def LiH(distance):
-        multiplicity = 1
-        charge = 0
-        geometry = [("Li", (0, 0, 0)), ("H", (0, 0, distance))]
-        return geometry, multiplicity, charge
-
-    def OH(distance):
-        multiplicity = 1
-        charge = -1
-        geometry = [("O", (0, 0, 0)), ("H", (0, 0, distance))]
-        return geometry, multiplicity, charge
-
-    def BeH2(distance):
-        multiplicity = 3
-        charge = 0
-        geometry = [("H", (0, 0, distance * (-1))), ("Be", (0, 0, 0)), ("H", (0, 0, distance * (1)))]
-        return geometry, multiplicity, charge
-
-    def CO2(distance):
-        multiplicity = 1
-        charge = 0
-        geometry = [("O", (0, 0, distance * (-1))), ("C", (0, 0, 0)), ("O", (0, 0, distance * (1)))]
-        return geometry, multiplicity, charge
-
-    def He2(distance):
-        multiplicity = 2
-        charge = +1
-        geometry = [("He", (0, 0, distance * (-0.5))), ("He", (0, 0, distance * (0.5)))]
-        return geometry, multiplicity, charge
-
-    def CH4(distance):
-        charge = 0
-        multiplicity = 1
-        a = distance / np.sqrt(3)
-        geometry = [
-            ("C", (0.0, 0.0, 0.0)),
-            ("H", (a, a, a)),
-            ("H", (-a, -a, a)),
-            ("H", (-a, a, -a)),
-            ("H", (a, -a, -a)),
-        ]
-        return geometry, multiplicity, charge
-
-    def H2O(bond_length):
-        charge = 0
-        multiplicity = 1
-        angle = np.radians(104.5)
-        geometry = [
-            ("O", (0.0, 0.0, 0.0)),
-            ("H", (bond_length, 0.0, 0.0)),
-            ("H", (bond_length * np.cos(angle), bond_length * np.sin(angle), 0.0)),
-        ]
-        return geometry, multiplicity, charge
-
-    def O2(distance):
-        multiplicity = 3
-        charge = 0
-        geometry = [("O", (0, 0, -0.5 * distance)), ("O", (0, 0, 0.5 * distance))]
-        return geometry, multiplicity, charge
-
-    def Cr2(distance):
-        multiplicity = 1
-        charge = 0
-        geometry = [("Cr", (0, 0, 0)), ("Cr", (0, 0, distance))]
-        return geometry, multiplicity, charge
-
-    # マップ化してガード節で早期return（分岐のネストを削減）
-    _builders = {
-        "H2": H2,
-        "H3": H3,
-        "H4": H4,
-        "H5": H5,
-        "H6": H6,
-        "H7": H7,
-        "H8": H8,
-        "H9": H9,
-        "H10": H10,
-        "H11": H11,
-        "H12": H12,
-        "H13": H13,
-        "H14": H14,
-        "H15": H15,
-        "LiH": LiH,
-        "BeH2": BeH2,
-        "OH": OH,
-        "He2": He2,
-        "HF": HF,
-        "CH4": CH4,
-        "H2O": H2O,
-        "CO2": CO2,
-        "O2": O2,
-        "Cr2": Cr2,
-    }
-    if mol_type not in _builders:
-        raise ValueError(f"Unknown mol_type '{mol_type}'. Supported keys: {sorted(_builders.keys())}")
-    return _builders[mol_type](distance)
+    return geometry, multiplicity, charge
 
 
 def geo(mol_type: str, distance: Optional[float] = None):
@@ -613,7 +318,7 @@ def trotter_error_plt_qc_gr(
     # 定数項（アイデンティティ項）の実数部を取得
     const = next(iter(ham_list[0].terms.values())).real
 
-    if mol_type in ("H2", "H3"):
+    if mol_type in (2, 3):
         jw_hamiltonian = jw
         E, ori_vec, _ = ham_ground_energy(jw_hamiltonian)
         clique_list, _ = min_hamiltonian_grouper(jw_hamiltonian, ham_name)
