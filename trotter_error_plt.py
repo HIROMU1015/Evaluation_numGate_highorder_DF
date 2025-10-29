@@ -548,6 +548,25 @@ def new_4th_m2_list():
     return w
 
 
+def _get_w_list(num_w: Any) -> List[float]:
+    """積公式パラメータ w の系列を取得（分岐を関数化）。"""
+    if num_w == '8th(Morales)':
+        return morales_8th_list()
+    if num_w == '10th(Morales)':
+        return morales_10th_m16_list()
+    if num_w == '4th':
+        return yoshida_4th_list()
+    if num_w == "8th(Yoshida)":
+        return yoshida_8th_list()
+    if num_w == '2nd':
+        return trotter_2nd_list()
+    if num_w == "4th(new_3)":
+        return new_4th_m3_list()
+    if num_w == "4th(new_2)":
+        return new_4th_m2_list()
+    raise ValueError(f"Unsupported num_w: {num_w}")
+
+
 def save_data(file_name: str, data: Any, gr: Optional[bool] = None):
     """pickle で結果を保存する（保存先は定数で一元化）。"""
     current_dir = os.getcwd()
@@ -659,6 +678,80 @@ def trotter_error_plt_qc_gr(
     plt.ylabel("error")
     plt.plot(t_values, error_list_pertur, marker="s", linestyle="-")
     plt.show()
+
+
+def calculation_cost(clique_list, num_w,ham_name):
+    """
+    分解数計算用(decompo_num) clique_num_dir にそのクリークに含まれる項をインデックス付きで登録
+    """
+
+    clique_num_dir = {}
+    for i, clique in enumerate(clique_list):
+        num_terms = 0
+        for terms in clique:
+            #term_list = [term for term in terms]
+            term_list = [term for term in terms if list(term.terms.keys())[0] != ()]
+            num_terms += len(term_list)
+        clique_num_dir[i] = num_terms
+
+    if num_w == 0:
+        total_exp = sum(clique_num_dir.values())
+        return total_exp, clique_num_dir
+    
+    w_list = _get_w_list(num_w)
+    m = len(w_list)
+
+    total_exp = 0
+    J = len(clique_list)
+
+    if m == 1:
+        for i in range(J-1):
+            total_exp += clique_num_dir[i]
+        total_exp += clique_num_dir[J-1]
+        for k in reversed(range(0,J-1)):
+            total_exp += clique_num_dir[k]
+        return total_exp, clique_num_dir
+
+    #S2_left
+    for i in range(J-1):
+        total_exp += clique_num_dir[i]
+    total_exp += clique_num_dir[J-1]
+    for k in reversed(range(1,J-1)):
+        total_exp += clique_num_dir[k]
+    total_exp += clique_num_dir[0]
+
+    #S2
+    for _ in reversed(range(1, m-1)):
+        for i in range(1,J-1):
+            total_exp += clique_num_dir[i]
+        # 折り返し
+        total_exp += clique_num_dir[J-1]
+        # 終端 - 1 個目まで
+        for k in reversed(range(1,J-1)):
+            total_exp += clique_num_dir[k]
+        # 終端
+        total_exp += clique_num_dir[0]
+    for _ in range(0,m-1):
+        for i in range(1,J-1):
+            total_exp += clique_num_dir[i]
+        # 折り返し
+        total_exp += clique_num_dir[J-1]
+        # 終端 - 1 個目まで
+        for k in reversed(range(1,J-1)):
+            total_exp += clique_num_dir[k]
+        # 終端
+        total_exp += clique_num_dir[0]
+
+    #S2right
+    for i in range(1,J-1):
+        total_exp += clique_num_dir[i]
+    # 折り返し
+    total_exp += clique_num_dir[J-1]
+    # 終端 まで
+    for k in reversed(range(0,J-1)):
+        total_exp += clique_num_dir[k]
+
+    return total_exp,clique_num_dir
 
 
 decompo_num = {'H2': {'8th(Yoshida)': 220, '2nd': 24, '4th': 52, '8th(Morales)': 248, '10th(Morales)': 472, '4th(new_3)': 108, '4th(new_2)': 80, '4(new_1)': 52, '6(new_3)': 108}, 'H3': {'8th(Yoshida)': 1476, '2nd': 118, '4th': 312, '8th(Morales)': 1670, '10th(Morales)': 3222, '4th(new_3)': 700, '4th(new_2)': 506, '4(new_1)': 312, '6(new_3)': 700}, 'H4': {'8th(Yoshida)': 5436, '2nd': 396, '4th': 1116, '8th(Morales)': 6156, '10th(Morales)': 11916, '4th(new_3)': 2556, '4th(new_2)': 1836, '4(new_1)': 1116, '6(new_3)': 2556}, 'H5': {'8th(Yoshida)': 14200, '2nd': 998, '4th': 2884, '8th(Morales)': 16086, '10th(Morales)': 31174, '4th(new_3)': 6656, '4th(new_2)': 4770, '4(new_1)': 2884, '6(new_3)': 6656}, 'H6': {'8th(Yoshida)': 30648, '2nd': 2116, '4th': 6192, '8th(Morales)': 34724, '10th(Morales)': 67332, '4th(new_3)': 14344, '4th(new_2)': 10268, '4(new_1)': 6192, '6(new_3)': 14344}, 'H7': {'8th(Yoshida)': 58920, '2nd': 4026, '4th': 11868, '8th(Morales)': 66762, '10th(Morales)': 129498, '4th(new_3)': 27552, '4th(new_2)': 19710, '4(new_1)': 11868, '6(new_3)': 27552}, 'H8': {'8th(Yoshida)': 102556, '2nd': 6964, '4th': 20620, '8th(Morales)': 116212, '10th(Morales)': 225460, '4th(new_3)': 47932, '4th(new_2)': 34276, '4(new_1)': 20620, '6(new_3)': 47932}, 'H9': {'8th(Yoshida)': 170016, '2nd': 11494, '4th': 34140, '8th(Morales)': 192662, '10th(Morales)': 373830, '4th(new_3)': 79432, '4th(new_2)': 56786, '4(new_1)': 34140, '6(new_3)': 79432}, 'H10': {'8th(Yoshida)': 261960, '2nd': 17660, '4th': 52560, '8th(Morales)': 296860, '10th(Morales)': 576060, '4th(new_3)': 122360, '4th(new_2)': 87460, '4(new_1)': 52560, '6(new_3)': 122360}, 'H11': {'8th(Yoshida)': 385648, '2nd': 25946, '4th': 77332, '8th(Morales)': 437034, '10th(Morales)': 848122, '4th(new_3)': 180104, '4th(new_2)': 128718, '4(new_1)': 77332, '6(new_3)': 180104}, 'H12': {'8th(Yoshida)': 550620, '2nd': 36988, '4th': 110364, '8th(Morales)': 623996, '10th(Morales)': 1211004, '4th(new_3)': 257116, '4th(new_2)': 183740, '4(new_1)': 110364, '6(new_3)': 257116}, 'H13': {'8th(Yoshida)': 767016, '2nd': 51462, '4th': 153684, '8th(Morales)': 869238, '10th(Morales)': 1687014, '4th(new_3)': 358128, '4th(new_2)': 255906, '4(new_1)': 153684, '6(new_3)': 358128}, 'H14': {'8th(Yoshida)': 1037656, '2nd': 69556, '4th': 207856, '8th(Morales)': 1175956, '10th(Morales)': 2282356, '4th(new_3)': 484456, '4th(new_2)': 346156, '4(new_1)': 207856, '6(new_3)': 484456}, 'H15': {'8th(Yoshida)': 1385520, '2nd': 92802, '4th': 277476, '8th(Morales)': 1570194, '10th(Morales)': 3047586, '4th(new_3)': 646824, '4th(new_2)': 462150, '4(new_1)': 277476, '6(new_3)': 646824}}
