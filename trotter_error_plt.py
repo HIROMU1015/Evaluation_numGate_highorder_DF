@@ -650,10 +650,21 @@ def trotter_error_plt_qc_gr(
     ave_coeff = 10 ** (ave_coeff)
 
     linear_error = np.polyfit(time_log, error_log, 1)
+    slope = linear_error[0]
+    intercept = linear_error[1]
     print("error exponent :" + str(linear_error[0]))
     # In Y = CX^a, logY = AlogX + B as 10^B = C
     coeff = 10 ** linear_error[1]
     print("error coefficient :" + str(coeff))
+
+    x_flat = np.ravel(time_log).astype(float)
+    y_flat = np.ravel(error_log).astype(float)
+
+    corr_matrix = np.corrcoef(x_flat, y_flat)
+    corr = corr_matrix[0, 1]
+    r2_loglog = corr**2
+    print("r^2 (log-log):", r2_loglog)
+
     if storage is True:
         data = {"expo": linear_error[0], "coeff": coeff}
         if num_w is not None:
