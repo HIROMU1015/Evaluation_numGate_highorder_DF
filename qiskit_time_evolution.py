@@ -5,8 +5,9 @@ from typing import Any, Iterable, List, Sequence, Tuple
 import numpy as np
 
 # openfermion / grouping
+from openfermion import InteractionOperator
 from openfermion.ops import FermionOperator, QubitOperator
-from openfermion.transforms import jordan_wigner
+from openfermion.transforms import jordan_wigner,get_fermion_operator
 from openfermion.chem.molecular_data import spinorb_from_spatial  # noqa: F401 (参照のみ)
 
 # qiskit
@@ -50,7 +51,6 @@ def apply_time_evolution(eigenvector: np.ndarray, time_evolution_circuit: Quantu
     sv = Statevector(eigenvector)
     final_sv = sv.evolve(time_evolution_circuit)
     return final_sv
-
 
 def _term_to_sparse_pauli(term: Tuple[Tuple[int, str], ...], n_qubits: int) -> SparsePauliOp:
     """OpenFermionの term を Qiskit の SparsePauliOp に変換（キャッシュ付）。"""
@@ -282,3 +282,218 @@ def make_fci_vector_from_pyscf_solver_grouper(mol_type: str) -> Tuple[List[List[
 
     vector = fci_vector.reshape(-1, 1)
     return grouping_jw_list, n_qubits, energy, vector
+
+
+# =========================
+# 摂動論誤差検証用
+# =========================
+
+def add_term_to_circuit(hamiltonian, n_qubits, t, w, qc):
+    """単一ハミルトニアン（OpenFermion QubitOperator）の各項を回路に追加し、追加した指数項数を返す。
+    注: Qiskit の Pauli ラベルは右端が q0。OpenFermion のインデックスに合わせて構築する際はこの反転規約に注意。
+    """
+    num_exp = 0
+    for term, coeff in hamiltonian.terms.items():
+        angle = coeff.real * w * t
+        if not term:
+            # 恒等項はグローバル位相のみ。物理的な指数項数としてはカウントしない。
+            qc.append(GlobalPhaseGate(-angle))
+            continue
+
+        # ラベルを I で初期化し、(index, 'X'/'Y'/'Z') を配置
+        label = ["I"] * n_qubits
+        for idx, pauli_name in term:
+            label[idx] = pauli_name
+
+        # Qiskit では右端が q0 なのでラベルを反転して整合を取る
+        pauli_label = "".join(label[::-1])  # ← ラベル反転（右端が q0）
+        pauli_op = SparsePauliOp(pauli_label)
+
+        evo = PauliEvolutionGate(pauli_op, time=angle, synthesis=None)
+        qc.append(evo, range(n_qubits))
+        num_exp += 1
+    return num_exp
+
+
+
+def add_term_to_circuit(hamiltonian, n_qubits, t, w, qc): #ハミルトニアンの項からゲートを回路に追加
+    from qiskit.synthesis.evolution import SuzukiTrotter
+    from qiskit.synthesis.evolution import MatrixExponential
+
+    num_exp = 0
+    for term, coeff in hamiltonian.terms.items():
+        X = SparsePauliOp("X")
+        Y = SparsePauliOp("Y")
+        Z = SparsePauliOp("Z")
+        I = SparsePauliOp("I")
+        pauli_dict = {'I': I, 'X': X, 'Y': Y, 'Z': Z}
+        pauli_operators = [I] * n_qubits  
+        
+        #term の内容に基づき、適切なビットにパウリ演算子を配置
+        for index, pauli_op_name in term:
+            pauli_operators[index] = pauli_dict[pauli_op_name]
+        
+        #全体のパウリ演算子のテンソル積を生成
+        pauli_op = pauli_operators[0]
+        for op in pauli_operators[1:]:
+            pauli_op ^= op
+
+        #回転角度の計算
+        angle = coeff.real * w * t
+        # PauliEvolutionGate を作成し、量子回路に追加
+        if not term :
+            qc.append(GlobalPhaseGate(-1*angle))
+            return num_exp
+
+        rotation_gate = PauliEvolutionGate(pauli_op, time=angle, synthesis=None)
+        #rotation_gate = PauliEvolutionGate(pauli_op, time=angle, synthesis=SuzukiTrotter(order=4,reps=2))
+        #rotation_gate = PauliEvolutionGate(pauli_op, time=angle, synthesis=MatrixExponential())
+
+        qc.append(rotation_gate, range(n_qubits))
+    return num_exp
+
+
+def S_2(ham_list, t, n_qubits, w, qc, eU, speU):
+    """2次PFの基本シンメトリック分解（左端）。指数項数を返す。"""
+    J = len(ham_list)
+    num_exp = 0
+    for i in range(J - 1):
+        num_exp += add_term_to_circuit(ham_list[i], n_qubits, t, w / 2, qc)
+    num_exp += add_term_to_circuit(ham_list[J - 1], n_qubits, t, w, qc)
+    for k in reversed(range(0, J - 1)):
+        num_exp += add_term_to_circuit(ham_list[k], n_qubits, t, w / 2, qc)
+    return num_exp
+
+
+def S_2_trotter_left(A_list, n_qubits, t, Max_w, nMax_w, qc, eU, speU):
+    """高次PF 合成用の左端ブロック。指数項数を返す。"""
+    J = len(A_list)
+    num_exp = 0
+    for i in range(J - 1):
+        num_exp += add_term_to_circuit(A_list[i], n_qubits, t, Max_w / 2, qc)
+    num_exp += add_term_to_circuit(A_list[J - 1], n_qubits, t, Max_w, qc)
+    for k in reversed(range(1, J - 1)):
+        num_exp += add_term_to_circuit(A_list[k], n_qubits, t, Max_w / 2, qc)
+    num_exp += add_term_to_circuit(A_list[0], n_qubits, t, (Max_w + nMax_w) / 2, qc)
+    return num_exp
+
+
+def S_2_trotter(A_list, n_qubits, t, w_f, w_s, qc, eU, speU, idx):
+    """高次PF 合成用の中央ブロック。指数項数を返す。"""
+    J = len(A_list)
+    num_exp = 0
+    for i in range(1, J - 1):
+        num_exp += add_term_to_circuit(A_list[i], n_qubits, t, w_f / 2, qc)
+    num_exp += add_term_to_circuit(A_list[J - 1], n_qubits, t, w_f, qc)
+    for k in reversed(range(1, J - 1)):
+        num_exp += add_term_to_circuit(A_list[k], n_qubits, t, w_f / 2, qc)
+    num_exp += add_term_to_circuit(A_list[0], n_qubits, t, (w_f + w_s) / 2, qc)
+    return num_exp
+
+
+def S_2_trotter_right(A_list, n_qubits, t, w_i, qc, eU, speU, idx):
+    """高次PF 合成用の右端ブロック。指数項数を返す。"""
+    J = len(A_list)
+    num_exp = 0
+    for i in range(1, J - 1):
+        num_exp += add_term_to_circuit(A_list[i], n_qubits, t, w_i / 2, qc)
+    num_exp += add_term_to_circuit(A_list[J - 1], n_qubits, t, w_i, qc)
+    for k in reversed(range(0, J - 1)):
+        num_exp += add_term_to_circuit(A_list[k], n_qubits, t, w_i / 2, qc)
+    return num_exp
+
+
+def w_trotter(qc, ham_list, t, n_qubits, num_w):
+    """与えられた w シリーズで PF 分解を回路に追加し、累計の指数項数を返す。"""
+    eU = speU = idx = 0  # 未使用パラメータの互換維持
+    w_list = _get_w_list(num_w)
+    m = len(w_list)
+    if m == 1:
+        return S_2(ham_list, t, n_qubits, w_list[0], qc, eU, speU)
+
+    num_exp = 0
+    num_exp += S_2_trotter_left(ham_list, n_qubits, t, w_list[m - 1], w_list[m - 2], qc, eU, speU)
+    for i in reversed(range(1, m - 1)):
+        num_exp += S_2_trotter(ham_list, n_qubits, t, w_list[i], w_list[i - 1], qc, eU, speU, idx)
+    for i in range(0, m - 1):
+        num_exp += S_2_trotter(ham_list, n_qubits, t, w_list[i], w_list[i + 1], qc, eU, speU, idx)
+    num_exp += S_2_trotter_right(ham_list, n_qubits, t, w_list[m - 1], qc, eU, speU, idx)
+    return num_exp
+
+
+def tEvolution_vector(ham_list, t, n_qubits, ori_vec, num_w):
+    """非グルーピング版の時間発展回路を合成し、最終状態と指数項数を返す。"""
+    evo_qc = QuantumCircuit(n_qubits)
+    num_exp = w_trotter(evo_qc, ham_list, t, n_qubits, num_w)
+    final_state = apply_time_evolution(ori_vec, evo_qc)
+    return t, final_state
+
+def make_fci_vector_from_pyscf_solver(mol_type):
+    """PySCFからFCIベクトルとJWハミルトニアンを生成（元コードと同一の並びと位相）。"""
+    # --- Geometry / SCF ---
+    geometry, multiplicity, molcharge = tsag.geo(mol_type)
+    mol = gto.Mole()
+    mol.atom = geometry
+    mol.basis = "sto-3g"
+    mol.spin = multiplicity - 1
+    mol.charge = molcharge
+    mol.symmetry = False
+    mol.build()
+    mf = scf.RHF(mol)
+    mf.kernel()
+
+    # --- Molecular integrals ---
+    constant = mf.energy_nuc()
+    mo = mf.mo_coeff
+    h_core = mf.get_hcore()
+    one_body = reduce(np.dot, (mo.T, h_core, mo))
+    eri = pyscf.ao2mo.kernel(mf.mol, mo)
+    eri = pyscf.ao2mo.restore(1, eri, mo.shape[0])
+    two_body = np.asarray(eri.transpose(0, 2, 3, 1), order="C")
+
+    # spin-orbital Hamiltonian → Fermion → JW
+    h1s, h2s = spinorb_from_spatial(one_body, two_body * 0.5)
+    ham_fermion = get_fermion_operator(InteractionOperator(constant, h1s, h2s))
+    jw_hamiltonian = jordan_wigner(ham_fermion)
+
+    # --- FCI solve ---
+    pyscf_fci = fci.FCI(mol, mf.mo_coeff)
+    energy, ci_matrix = pyscf_fci.kernel()
+    n_orb = pyscf_fci.norb
+    n_qubits = n_orb * 2
+    nelec_alpha, nelec_beta = pyscf_fci.nelec
+
+    # --- CI state on qubits: interleave [beta_k, alpha_k] for k=0.. ---
+    fci_vector = np.zeros(2 ** n_qubits, dtype=np.complex128)
+    ci_alpha = cistring.make_strings(range(n_orb), nelec_alpha)
+    ci_beta  = cistring.make_strings(range(n_orb), nelec_beta)
+
+    for i, a_str in enumerate(ci_alpha):
+        a_bits = format(a_str, f"0{n_qubits // 2}b")[::-1]  # LSBが軌道0
+        for j, b_str in enumerate(ci_beta):
+            b_bits = format(b_str, f"0{n_qubits // 2}b")[::-1]
+
+            # 交互に [β_k, α_k]
+            interleaved = []
+            for bit_a, bit_b in zip(a_bits, b_bits):
+                interleaved.append(bit_b)
+                interleaved.append(bit_a)
+            bitstring = "".join(interleaved)
+
+            # Jordan–Wigner 位相補正（元コードと同じ規則）
+            sign = 1
+            N = len(a_bits)
+            for k in range(N):
+                if a_bits[k] == "1":
+                    # 反転後の添字で k より大きい位置が元の「左側」
+                    for l in range(k + 1, N):
+                        if b_bits[l] == "1":
+                            sign *= -1
+
+            index = int(bitstring, 2)
+            fci_vector[index] = sign * ci_matrix[i][j]
+
+    vector = fci_vector.reshape(-1, 1)
+    return jw_hamiltonian, n_qubits, energy, vector, ci_matrix
+
+
