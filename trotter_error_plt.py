@@ -945,7 +945,7 @@ def calculation_cost(clique_list, num_w,ham_name):
 decompo_num = {'H2': {'8th(Yoshida)': 220, '2nd': 24, '4th': 52, '8th(Morales)': 248, '10th(Morales)': 472, '4th(new_3)': 108, '4th(new_2)': 80, '4(new_1)': 52, '6(new_3)': 108}, 'H3': {'8th(Yoshida)': 1476, '2nd': 118, '4th': 312, '8th(Morales)': 1670, '10th(Morales)': 3222, '4th(new_3)': 700, '4th(new_2)': 506, '4(new_1)': 312, '6(new_3)': 700}, 'H4': {'8th(Yoshida)': 5436, '2nd': 396, '4th': 1116, '8th(Morales)': 6156, '10th(Morales)': 11916, '4th(new_3)': 2556, '4th(new_2)': 1836, '4(new_1)': 1116, '6(new_3)': 2556}, 'H5': {'8th(Yoshida)': 14200, '2nd': 998, '4th': 2884, '8th(Morales)': 16086, '10th(Morales)': 31174, '4th(new_3)': 6656, '4th(new_2)': 4770, '4(new_1)': 2884, '6(new_3)': 6656}, 'H6': {'8th(Yoshida)': 30648, '2nd': 2116, '4th': 6192, '8th(Morales)': 34724, '10th(Morales)': 67332, '4th(new_3)': 14344, '4th(new_2)': 10268, '4(new_1)': 6192, '6(new_3)': 14344}, 'H7': {'8th(Yoshida)': 58920, '2nd': 4026, '4th': 11868, '8th(Morales)': 66762, '10th(Morales)': 129498, '4th(new_3)': 27552, '4th(new_2)': 19710, '4(new_1)': 11868, '6(new_3)': 27552}, 'H8': {'8th(Yoshida)': 102556, '2nd': 6964, '4th': 20620, '8th(Morales)': 116212, '10th(Morales)': 225460, '4th(new_3)': 47932, '4th(new_2)': 34276, '4(new_1)': 20620, '6(new_3)': 47932}, 'H9': {'8th(Yoshida)': 170016, '2nd': 11494, '4th': 34140, '8th(Morales)': 192662, '10th(Morales)': 373830, '4th(new_3)': 79432, '4th(new_2)': 56786, '4(new_1)': 34140, '6(new_3)': 79432}, 'H10': {'8th(Yoshida)': 261960, '2nd': 17660, '4th': 52560, '8th(Morales)': 296860, '10th(Morales)': 576060, '4th(new_3)': 122360, '4th(new_2)': 87460, '4(new_1)': 52560, '6(new_3)': 122360}, 'H11': {'8th(Yoshida)': 385648, '2nd': 25946, '4th': 77332, '8th(Morales)': 437034, '10th(Morales)': 848122, '4th(new_3)': 180104, '4th(new_2)': 128718, '4(new_1)': 77332, '6(new_3)': 180104}, 'H12': {'8th(Yoshida)': 550620, '2nd': 36988, '4th': 110364, '8th(Morales)': 623996, '10th(Morales)': 1211004, '4th(new_3)': 257116, '4th(new_2)': 183740, '4(new_1)': 110364, '6(new_3)': 257116}, 'H13': {'8th(Yoshida)': 767016, '2nd': 51462, '4th': 153684, '8th(Morales)': 869238, '10th(Morales)': 1687014, '4th(new_3)': 358128, '4th(new_2)': 255906, '4(new_1)': 153684, '6(new_3)': 358128}, 'H14': {'8th(Yoshida)': 1037656, '2nd': 69556, '4th': 207856, '8th(Morales)': 1175956, '10th(Morales)': 2282356, '4th(new_3)': 484456, '4th(new_2)': 346156, '4(new_1)': 207856, '6(new_3)': 484456}, 'H15': {'8th(Yoshida)': 1385520, '2nd': 92802, '4th': 277476, '8th(Morales)': 1570194, '10th(Morales)': 3047586, '4th(new_3)': 646824, '4th(new_2)': 462150, '4(new_1)': 277476, '6(new_3)': 646824}}
 
 color_map = {'2nd':'g','4th(new_3)':'r','4th(new_1)':'lightcoral','4th(new_2)':'b','6th(new_4)':'darkgreen','4th':'c', '8th(Morales)':'m', '10th(Morales)':'greenyellow', '8th(Yoshida)':'orange'}
-marker_map = {'2nd':'o','4th(new_3)':'v','4th(new_1)':'lightcoral','4th(new_2)':'b','6th(new_4)':'darkgreen','4th':'^', '8th(Morales)':'h', '10th(Morales et al.)':'H', '8th(Yoshida)':'>'}
+marker_map = {'2nd':'o','4th(new_3)':'v','4th(new_1)':'lightcoral','4th(new_2)':'<','6th(new_4)':'darkgreen','4th':'^', '8th(Morales)':'h', '10th(Morales)':'H', '8th(Yoshida)':'>'}
 
 
 def exp_extrapolation(Hchain, n_w_list, show_bands=True, band_height=0.06, band_alpha=0.28):
@@ -968,7 +968,6 @@ def exp_extrapolation(Hchain, n_w_list, show_bands=True, band_height=0.06, band_
 
     num_qubits = [i for i in range(4,(Hchain*2)+1,2)]
 
-    lbcheck = 0
     for chain, qubit, mol in zip(Hchain_list, num_qubits, Hchain_str):
         distance = 1.0
         _, _, ham_name, n_qubits = jw_hamiltonian_maker(chain, distance)
@@ -980,7 +979,7 @@ def exp_extrapolation(Hchain, n_w_list, show_bands=True, band_height=0.06, band_
         for n_w in n_w_list:
             if n_w == '10th(Morales)' and n_qubits == 30: # 10th は H15 で未評価
                 continue
-            elif n_w == '4th(new_2)' and n_qubits >18:
+            elif n_w == '4th(new_2)' and n_qubits >28:
                 continue
 
             target_path = f"{ham_name}_Operator_{n_w}_ave"
@@ -1105,6 +1104,162 @@ def exp_extrapolation(Hchain, n_w_list, show_bands=True, band_height=0.06, band_
     ax.grid(True, which='minor', axis='y', linestyle=':', linewidth=0.5, alpha=0.35)
     ax.grid(True, which='major', axis='y', linestyle='-', linewidth=0.8, alpha=0.6)
     plt.show()
+
+
+def exp_extrapolation_diff(
+    Hchain,
+    n_w_list=("4th(new_2)", "8th(Morales)"),
+    MIN_POS=1e-18,
+    X_MIN_CALC=4,
+    X_MAX_DISPLAY=100
+):
+    """
+    単一図（左右Y軸）:
+      左Y: 総パウリ回転数（散布 + log–log フィット）
+      右Y: 2本のフィット直線の絶対差 |Δ|
+    依存：decompo_num, optimal_distance, jw_hamiltonian_maker, load_data, label_replace,
+         marker_map, color_map, p_dir
+    """
+    from collections import defaultdict
+
+    # 対象 H チェーン
+    Hchain_list = [i for i in range(2, Hchain + 1)]
+    Hchain_str  = [f"H{i}" for i in range(2, Hchain + 1)]
+    num_qubits  = [i for i in range(4, (Hchain * 2) + 1, 2)]
+
+    CA = 1.59360010199040e-3
+    CA1 = 1.59360010199040e-4
+    eps = CA1
+
+    beta = 1.20
+
+    current_dir = os.getcwd()
+    parent_dir = os.path.join(current_dir, "trotter_expo_coeff_gr")
+
+    # 総回転数の算出
+    total_dir = {}
+    for chain, qubit, mol in zip(Hchain_list, num_qubits, Hchain_str):
+        distance = 1.0
+        _, _, ham_name, n_qubits = jw_hamiltonian_maker(chain, distance)
+        ham_name = ham_name + "_grouping"
+        total_dir[n_qubits] = {}
+
+        for n_w in n_w_list:
+            if n_w == '10th(Morales)' and n_qubits == 30: # 10th は H15 で未評価
+                continue
+            elif n_w == '4th(new_2)' and n_qubits >28:
+                continue
+
+            target_path = f"{ham_name}_Operator_{n_w}_ave"
+            file_path = os.path.join(parent_dir, target_path)
+            data = load_data(file_path)
+
+            coeff = data
+            expo = p_dir[n_w]
+
+            min_f = beta * (eps**(-(1+(1/expo)))) * (1/expo) * (coeff**(1/expo)) * (expo+1)**(1+(1/expo))
+
+            # グルーピングあり
+            unit_expo = decompo_num[mol][n_w]
+            total_expo = unit_expo * min_f
+
+            total_dir[n_qubits][n_w] = total_expo
+
+    # ---- プロット（単一図・双Y軸）----
+    plt.figure(figsize=(8,6), dpi=200)
+
+    series = defaultdict(lambda: {"x": [], "y": []})
+    for qubit, gate_dir in total_dir.items():
+        for pf, gate in gate_dir.items():
+            lb = label_replace(pf)
+            # 散布
+            plt.plot(qubit, gate, ls='None', marker=marker_map[pf], color=color_map[pf],
+                     label=lb if qubit == num_qubits[0] else None)
+            # フィット用
+            series[pf]["x"].append(float(qubit))
+            series[pf]["y"].append(float(gate))
+
+    ax  = plt.gca()
+    ax2 = ax.twinx()
+
+    # 軸
+    ax.set_xscale("log")
+    ax.set_yscale("log")
+
+    # x の右端を固定
+    x_left_auto, _ = ax.get_xlim()
+    ax.set_xlim(x_left_auto, X_MAX_DISPLAY)
+
+    # ---- フィット ----
+    fit_params = {}
+    xfit_lo = max(X_MIN_CALC, x_left_auto)
+    xfit_hi = X_MAX_DISPLAY
+
+    for lb, d in series.items():
+        x = np.asarray(d["x"], dtype=float)
+        y = np.asarray(d["y"], dtype=float)
+        m = (x > 0) & (y > 0)
+        x, y = x[m], y[m]
+        if x.size < 2:
+            continue
+        B, log10A = np.polyfit(np.log10(x), np.log10(y), 1)
+        A = 10**log10A
+        fit_params[lb] = {"A": A, "B": B}
+
+        x_right = ax.get_xlim()[1]
+        xfit = np.logspace(np.log10(x.min()), np.log10(x_right), 400)
+        yfit = A * (xfit ** B)
+        ax.plot(xfit, yfit, '-', color=color_map.get(lb), alpha=0.9, linewidth=1.5)
+
+    # ---- 左軸：凡例 ----
+    handles_exist, labels_exist = ax.get_legend_handles_labels()
+    seen = set(); handles_u = []; labels_u = []
+    for h, lab in zip(handles_exist, labels_exist):
+        if lab and lab not in seen:
+            handles_u.append(h); labels_u.append(lab); seen.add(lab)
+    if handles_u:
+        ax.legend(handles_u, labels_u, loc="upper left", framealpha=0.9)
+
+
+    # ---- 右軸：差分 |Δ| ----
+    # フィット区間と同じ x 範囲 [xfit_lo, xfit_hi] で評価
+    # キーは pf 文字列（例: "4th(new_2)", "8(Mauro)"）で揃える
+    if xfit_hi > xfit_lo:
+        ax2.set_yscale("log")
+        if len(n_w_list) == 2 and all(pf in fit_params for pf in n_w_list):
+            pf_a, pf_b = n_w_list  # 表示順を n_w_list に揃える
+            xx = np.logspace(np.log10(xfit_lo), np.log10(xfit_hi), 1200)
+
+            A_a, B_a = fit_params[pf_a]["A"], fit_params[pf_a]["B"]
+            A_b, B_b = fit_params[pf_b]["A"], fit_params[pf_b]["B"]
+            ya = A_a * (xx ** B_a)
+            yb = A_b * (xx ** B_b)
+
+            diff = np.maximum(np.abs(yb - ya), MIN_POS)
+            ax2.plot(
+                xx, diff, "--", lw=2.0, alpha=0.9,
+                color=color_map.get(pf_a, None),
+                label=f"|Δ|: {label_replace(pf_b)} − {label_replace(pf_a)}"
+            )
+            # 左軸とレンジを一致させて目盛位置をそろえる
+            ax2.set_ylim(ax.get_ylim())
+
+        # 凡例（右軸）
+        hr, lr = ax2.get_legend_handles_labels()
+        if hr:
+            ax2.legend(hr, lr, loc="upper right", framealpha=0.9)
+
+
+    # 軸ラベル・グリッド
+    ax.set_xlabel("Num qubits", fontsize=15)
+    ax.set_ylabel("Number of Pauli rotations", fontsize=15)
+    ax2.set_ylabel("Difference in number of Pauli rotations", fontsize=15)
+    ax.grid(True, which='minor', axis='y', linestyle=':', linewidth=0.5, alpha=0.35)
+    ax.grid(True, which='major', axis='y', linestyle='-', linewidth=0.8, alpha=0.6)
+
+    plt.tight_layout()
+    plt.show()
+
 
 
 # =========================
@@ -1272,3 +1427,167 @@ def beta_scaling(
 
     print("Mean beta_fix over 100 trials:", beta_fix_array.mean())
     print("Std  beta_fix over 100 trials:", beta_fix_array.std())
+
+
+# =========================
+# 許容誤差ごとの最良積公式
+# =========================
+
+
+def best_product_formula_all(mol, ham_name, n_w_list):
+    CA = 1.59360010199040e-3
+    CA_list = [CA*(10**(-0.01*i)) for i in range(-200,300)]
+    beta = 1.2
+
+    result = {str(pair):[] for pair in n_w_list}
+    CA_exp = {str(pair):[] for pair in n_w_list}
+    expo_dir = {str(pair):None for pair in n_w_list}
+    coeff_dir = {str(pair):None for pair in n_w_list}
+    cost_dir = {str(pair):None for pair in n_w_list}
+    total_list = []
+
+
+    for num_w in n_w_list:
+        unit_expo = decompo_num[mol][num_w]
+
+        cost_dir[str(num_w)] = unit_expo
+
+        target_path = f"{ham_name}_Operator_{num_w}_ave"
+        # target_path = f"{ham_name}_Operator_{num_w}"
+
+        try:
+            data = load_data(target_path)
+            expo_dir[str(num_w)] = p_dir[num_w]
+            coeff_dir[str(num_w)] = data
+            # expo_dir[str(num_w)] = data['expo']
+            # coeff_dir[str(num_w)] = data['coeff']
+
+        except Exception as e:
+            print(f'not found {target_path}')
+            continue
+
+    # 所望精度達成ゲート数計算
+    for error_E in CA_list:
+        min_total_expo = float('inf')
+        best_trotter = None
+        total = {}
+        for num_w in n_w_list:
+            expo = expo_dir[str(num_w)]
+            coeff = coeff_dir[str(num_w)]
+            if expo == None or coeff == None:
+                continue
+            expo = float(expo)
+            coeff = float(coeff)
+            min_f = beta * (error_E**(-(1+(1/expo)))) * (1/expo) * (coeff**(1/expo)) * (expo+1)**(1+(1/expo))
+
+            # グルーピングあり
+            unit_expo = cost_dir[str(num_w)]
+
+            total_expo = unit_expo * min_f
+            # print(f'minf{min_f} cost{unit_expo} w{num_w}')
+            total[str(num_w)] = total_expo
+            if error_E == CA:
+                CA_exp[str(num_w)] = total_expo
+
+            if total_expo < min_total_expo:
+                min_total_expo = total_expo
+                best_trotter = str(num_w)
+        total_list.append(total)
+        error_fac = math.log10(error_E / CA)
+        result[best_trotter].append(error_fac)
+
+    return result, total_list, CA_exp 
+
+def efficient_accuracy_range_plt_grouper(Hchain, n_w_list):
+    CA = 1.59360010199040e-3
+    xdic = {}
+    dic = {str(n_w) :{} for n_w in n_w_list}
+
+    for chain in range(2,Hchain+1):
+        mol = f'H{chain}'
+        distance = 1.0
+        _, _, ham_name, n_qubits = jw_hamiltonian_maker(chain, distance)
+        ham_name = ham_name + '_grouping'
+        
+        xdic.setdefault(mol, n_qubits)
+        result,_,_ = best_product_formula_all(mol, ham_name, n_w_list)
+
+        for label, error_range in result.items():
+            if error_range:
+                min_error_expo = min(error_range)
+                max_error_expo = max(error_range)
+                accuracy_range = []
+                accuracy_range.append(CA*(10**(min_error_expo)))
+                accuracy_range.append(CA*(10**(max_error_expo)))
+                dic[label].setdefault(mol,accuracy_range)
+            else:
+                continue
+    """
+    data = {
+        'w2': { 'H2':[1, 5], 'H4':[2,6]},
+        'w4': { 'H2':[6, 7], 'H4':[7,8]}
+    }
+    xdic = {'H2':4, 'H4':8}
+    """
+    def plot_with_horizontal_offset(data, xdic, offset=0.2):
+
+        plt.figure(figsize=(8, 6),dpi=200)
+
+        # 凡例用のラベル管理
+        color_labels = set()
+        marker_labels = set()
+
+        marker_map = {
+            "H2": "o", "H3": "s", "H4": "^", "H5": "v", "H6": "<", "H7": ">", "H8": "D", "H9": "p", "H10": "h", "H11": "*", "H12": "x", "H13": "+", "H14": "P", "H15": "X",
+        }
+
+        x_offsets = {}  # 横軸のオフセット管理
+        def get_unique_x(x_base, shape, label):
+            #key = (shape, label)  # shape と label の組み合わせでユニークなキーを生成
+            if x_base not in x_offsets:
+                x_offsets[x_base] = {}
+            if shape not in x_offsets[x_base]:
+                x_offsets[x_base][shape] = len(x_offsets[x_base]) * offset
+            return x_base + x_offsets[x_base][shape]
+
+        for label, subsets in data.items():
+            color = color_map[label]  # グループ (w2, w4, w8) の色を取得
+            for shape, y_range in subsets.items():
+                x_base = xdic[shape]  # 基準横軸値を取得
+                x_unique = get_unique_x(x_base, shape, label)  # 一意の横軸位置を取得
+                plt.plot([x_unique, x_unique], y_range, marker=marker_map[shape], color=color)
+
+                if label not in color_labels:
+                    plt.plot([], [], color=color, label=label)
+                    color_labels.add(label)
+
+                if shape not in marker_labels:
+                    plt.plot([], [], marker=marker_map[shape], color="black", linestyle="None", label=shape)
+                    marker_labels.add(shape)
+
+        # グループ化された凡例の設定
+        handles, labels = plt.gca().get_legend_handles_labels()
+        color_handles = [h for h, l in zip(handles, labels) if l in data.keys()]
+        color_labels = [l for l in labels if l in data.keys()]
+        marker_handles = [h for h, l in zip(handles, labels) if l in xdic.keys()]
+        marker_labels = [l for l in labels if l in xdic.keys()]
+
+        ca_handle = plt.axhline(y=CA, color='r', linestyle='--', label='CA')
+
+        # 凡例にCAを追加
+        combined_handles = color_handles + marker_handles + [ca_handle]
+        combined_labels_0 = color_labels + marker_labels + ['CA']
+        combined_labels_1 = [s.replace("_gr","") for s in combined_labels_0]
+        combined_labels = [s.replace("my1","4(new)") for s in combined_labels_1]
+        combined_labels_2 = [label_replace(lb) for lb in combined_labels]
+
+        plt.yscale("log")
+        plt.xlabel("Spin orbitals",fontsize=15)
+        plt.ylabel("Target error [Hartree]",fontsize=15)
+        plt.tick_params(labelsize=15)
+        #plt.title("Accuracy range of each product formula for spin orbitals",fontsize=15)
+        plt.legend(combined_handles, combined_labels_2, title=f'product \nformula', loc="upper left", bbox_to_anchor=(1, 1), ncol=1, fontsize=13)
+
+        plt.show()
+
+    plot_with_horizontal_offset(dic,xdic,offset=0.2)
