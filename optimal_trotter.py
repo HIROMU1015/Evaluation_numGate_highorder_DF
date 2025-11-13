@@ -17,6 +17,7 @@ def generate_c_list(W_full, dtype=float):
     # 明示的にdtypeキャスト
     W_full = np.asarray(W_full, dtype=dtype)
 
+
     c_list = []
     c_list.append(W_full[m] / dtype(2))
     c_list.append(W_full[m])

@@ -5,26 +5,26 @@ from typing import Any, Iterable, List, Sequence, Tuple
 import numpy as np
 
 # openfermion / grouping
-from openfermion import InteractionOperator
-from openfermion.ops import FermionOperator, QubitOperator
-from openfermion.transforms import jordan_wigner,get_fermion_operator
-from openfermion.chem.molecular_data import spinorb_from_spatial  # noqa: F401 (参照のみ)
+from openfermion import InteractionOperator # type: ignore
+from openfermion.ops import FermionOperator, QubitOperator # type: ignore
+from openfermion.transforms import jordan_wigner,get_fermion_operator # type: ignore
+from openfermion.chem.molecular_data import spinorb_from_spatial  # type: ignore
 
 # qiskit
-import qiskit
-from qiskit import QuantumCircuit, transpile
-from qiskit.quantum_info import SparsePauliOp, Statevector
-from qiskit.circuit.library import PauliEvolutionGate, GlobalPhaseGate
-from qiskit_aer import AerSimulator
+import qiskit # type: ignore
+from qiskit import QuantumCircuit, transpile # type: ignore
+from qiskit.quantum_info import SparsePauliOp, Statevector # type: ignore
+from qiskit.circuit.library import PauliEvolutionGate, GlobalPhaseGate # type: ignore
+from qiskit_aer import AerSimulator # type: ignore
 
 # pyscf
-import pyscf
-from pyscf import fci, gto, scf
-from pyscf.fci import cistring
+import pyscf # type: ignore
+from pyscf import fci, gto, scf # type: ignore
+from pyscf.fci import cistring # type: ignore
 
 # external modules used in original file
-import trotter_error_plt as tsag
-from Almost_optimal_grouping import Almost_optimal_grouper
+import trotter_error_plt as tsag # type: ignore
+from Almost_optimal_grouping import Almost_optimal_grouper # type: ignore
 
 
 AER_METHOD_STATEVECTOR = "statevector"  # AerSimulator の method
@@ -288,39 +288,7 @@ def make_fci_vector_from_pyscf_solver_grouper(mol_type: str) -> Tuple[List[List[
 # 摂動論誤差検証用
 # =========================
 
-def add_term_to_circuit(hamiltonian, n_qubits, t, w, qc):
-    """単一ハミルトニアン（OpenFermion QubitOperator）の各項を回路に追加し、追加した指数項数を返す。
-    注: Qiskit の Pauli ラベルは右端が q0。OpenFermion のインデックスに合わせて構築する際はこの反転規約に注意。
-    """
-    num_exp = 0
-    for term, coeff in hamiltonian.terms.items():
-        angle = coeff.real * w * t
-        if not term:
-            # 恒等項はグローバル位相のみ。物理的な指数項数としてはカウントしない。
-            qc.append(GlobalPhaseGate(-angle))
-            continue
-
-        # ラベルを I で初期化し、(index, 'X'/'Y'/'Z') を配置
-        label = ["I"] * n_qubits
-        for idx, pauli_name in term:
-            label[idx] = pauli_name
-
-        # Qiskit では右端が q0 なのでラベルを反転して整合を取る
-        pauli_label = "".join(label[::-1])  # ← ラベル反転（右端が q0）
-        pauli_op = SparsePauliOp(pauli_label)
-
-        evo = PauliEvolutionGate(pauli_op, time=angle, synthesis=None)
-        qc.append(evo, range(n_qubits))
-        num_exp += 1
-    return num_exp
-
-
-
 def add_term_to_circuit(hamiltonian, n_qubits, t, w, qc): #ハミルトニアンの項からゲートを回路に追加
-    from qiskit.synthesis.evolution import SuzukiTrotter
-    from qiskit.synthesis.evolution import MatrixExponential
-
-    num_exp = 0
     for term, coeff in hamiltonian.terms.items():
         X = SparsePauliOp("X")
         Y = SparsePauliOp("Y")
@@ -343,64 +311,57 @@ def add_term_to_circuit(hamiltonian, n_qubits, t, w, qc): #ハミルトニアン
         # PauliEvolutionGate を作成し、量子回路に追加
         if not term :
             qc.append(GlobalPhaseGate(-1*angle))
-            return num_exp
+            return
 
         rotation_gate = PauliEvolutionGate(pauli_op, time=angle, synthesis=None)
-        #rotation_gate = PauliEvolutionGate(pauli_op, time=angle, synthesis=SuzukiTrotter(order=4,reps=2))
-        #rotation_gate = PauliEvolutionGate(pauli_op, time=angle, synthesis=MatrixExponential())
-
         qc.append(rotation_gate, range(n_qubits))
-    return num_exp
+    return
 
 
 def S_2(ham_list, t, n_qubits, w, qc, eU, speU):
     """2次PFの基本シンメトリック分解（左端）。指数項数を返す。"""
     J = len(ham_list)
-    num_exp = 0
     for i in range(J - 1):
-        num_exp += add_term_to_circuit(ham_list[i], n_qubits, t, w / 2, qc)
-    num_exp += add_term_to_circuit(ham_list[J - 1], n_qubits, t, w, qc)
+        add_term_to_circuit(ham_list[i], n_qubits, t, w / 2, qc)
+    add_term_to_circuit(ham_list[J - 1], n_qubits, t, w, qc)
     for k in reversed(range(0, J - 1)):
-        num_exp += add_term_to_circuit(ham_list[k], n_qubits, t, w / 2, qc)
-    return num_exp
+        add_term_to_circuit(ham_list[k], n_qubits, t, w / 2, qc)
+    return
 
 
 def S_2_trotter_left(A_list, n_qubits, t, Max_w, nMax_w, qc, eU, speU):
     """高次PF 合成用の左端ブロック。指数項数を返す。"""
     J = len(A_list)
-    num_exp = 0
     for i in range(J - 1):
-        num_exp += add_term_to_circuit(A_list[i], n_qubits, t, Max_w / 2, qc)
-    num_exp += add_term_to_circuit(A_list[J - 1], n_qubits, t, Max_w, qc)
+        add_term_to_circuit(A_list[i], n_qubits, t, Max_w / 2, qc)
+    add_term_to_circuit(A_list[J - 1], n_qubits, t, Max_w, qc)
     for k in reversed(range(1, J - 1)):
-        num_exp += add_term_to_circuit(A_list[k], n_qubits, t, Max_w / 2, qc)
-    num_exp += add_term_to_circuit(A_list[0], n_qubits, t, (Max_w + nMax_w) / 2, qc)
-    return num_exp
+        add_term_to_circuit(A_list[k], n_qubits, t, Max_w / 2, qc)
+    add_term_to_circuit(A_list[0], n_qubits, t, (Max_w + nMax_w) / 2, qc)
+    return
 
 
 def S_2_trotter(A_list, n_qubits, t, w_f, w_s, qc, eU, speU, idx):
     """高次PF 合成用の中央ブロック。指数項数を返す。"""
     J = len(A_list)
-    num_exp = 0
     for i in range(1, J - 1):
-        num_exp += add_term_to_circuit(A_list[i], n_qubits, t, w_f / 2, qc)
-    num_exp += add_term_to_circuit(A_list[J - 1], n_qubits, t, w_f, qc)
+        add_term_to_circuit(A_list[i], n_qubits, t, w_f / 2, qc)
+    add_term_to_circuit(A_list[J - 1], n_qubits, t, w_f, qc)
     for k in reversed(range(1, J - 1)):
-        num_exp += add_term_to_circuit(A_list[k], n_qubits, t, w_f / 2, qc)
-    num_exp += add_term_to_circuit(A_list[0], n_qubits, t, (w_f + w_s) / 2, qc)
-    return num_exp
+        add_term_to_circuit(A_list[k], n_qubits, t, w_f / 2, qc)
+    add_term_to_circuit(A_list[0], n_qubits, t, (w_f + w_s) / 2, qc)
+    return
 
 
 def S_2_trotter_right(A_list, n_qubits, t, w_i, qc, eU, speU, idx):
     """高次PF 合成用の右端ブロック。指数項数を返す。"""
     J = len(A_list)
-    num_exp = 0
     for i in range(1, J - 1):
-        num_exp += add_term_to_circuit(A_list[i], n_qubits, t, w_i / 2, qc)
-    num_exp += add_term_to_circuit(A_list[J - 1], n_qubits, t, w_i, qc)
+        add_term_to_circuit(A_list[i], n_qubits, t, w_i / 2, qc)
+    add_term_to_circuit(A_list[J - 1], n_qubits, t, w_i, qc)
     for k in reversed(range(0, J - 1)):
-        num_exp += add_term_to_circuit(A_list[k], n_qubits, t, w_i / 2, qc)
-    return num_exp
+        add_term_to_circuit(A_list[k], n_qubits, t, w_i / 2, qc)
+    return
 
 
 def w_trotter(qc, ham_list, t, n_qubits, num_w):
@@ -411,20 +372,19 @@ def w_trotter(qc, ham_list, t, n_qubits, num_w):
     if m == 1:
         return S_2(ham_list, t, n_qubits, w_list[0], qc, eU, speU)
 
-    num_exp = 0
-    num_exp += S_2_trotter_left(ham_list, n_qubits, t, w_list[m - 1], w_list[m - 2], qc, eU, speU)
+    S_2_trotter_left(ham_list, n_qubits, t, w_list[m - 1], w_list[m - 2], qc, eU, speU)
     for i in reversed(range(1, m - 1)):
-        num_exp += S_2_trotter(ham_list, n_qubits, t, w_list[i], w_list[i - 1], qc, eU, speU, idx)
+        S_2_trotter(ham_list, n_qubits, t, w_list[i], w_list[i - 1], qc, eU, speU, idx)
     for i in range(0, m - 1):
-        num_exp += S_2_trotter(ham_list, n_qubits, t, w_list[i], w_list[i + 1], qc, eU, speU, idx)
-    num_exp += S_2_trotter_right(ham_list, n_qubits, t, w_list[m - 1], qc, eU, speU, idx)
-    return num_exp
+        S_2_trotter(ham_list, n_qubits, t, w_list[i], w_list[i + 1], qc, eU, speU, idx)
+    S_2_trotter_right(ham_list, n_qubits, t, w_list[m - 1], qc, eU, speU, idx)
+    return
 
 
 def tEvolution_vector(ham_list, t, n_qubits, ori_vec, num_w):
     """非グルーピング版の時間発展回路を合成し、最終状態と指数項数を返す。"""
     evo_qc = QuantumCircuit(n_qubits)
-    num_exp = w_trotter(evo_qc, ham_list, t, n_qubits, num_w)
+    w_trotter(evo_qc, ham_list, t, n_qubits, num_w)
     final_state = apply_time_evolution(ori_vec, evo_qc)
     return t, final_state
 
