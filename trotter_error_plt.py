@@ -8,6 +8,7 @@ from collections import defaultdict
 from functools import reduce
 from multiprocessing import Pool
 from typing import Any, Dict, List, Optional, Tuple
+from collections import defaultdict
 
 import matplotlib.pyplot as plt
 import numpy as np # type: ignore
@@ -33,34 +34,9 @@ from scipy.sparse.linalg import eigs, eigsh, expm, matrix_power, norm # type: ig
 import qiskit_time_evolution as qte # type: ignore
 from Almost_optimal_grouping import Almost_optimal_grouper # type: ignore
 
-# =========================
-# 設定セクション（魔法値の定数化）
-# =========================
-DEFAULT_BASIS = "sto-3g"  # 基底関数（数値は変更しない）
-DEFAULT_DISTANCE = 1.0  # 原子間距離のデフォルト値（Å 相当の内部スケール）
-PICKLE_DIR = "trotter_expo_coeff"
-PICKLE_DIR_GROUPED = "trotter_expo_coeff_gr"
-POOL_PROCESSES = 32  # 並列処理プロセス数（挙動は不変）
-
-# PF の次数
-p_dir = {
-    "6th(new_4)": 6,
-    "6th(new_3)": 6,
-    "4th(new_1)": 4,
-    "4th(new_2)": 4,
-    "4th(new_3)": 4,
-    "2nd": 2,
-    "4th": 4,
-    "8th(Morales)": 8,
-    "10th(Morales)": 10,
-    "8th(Yoshida)": 8,
-}
-
+from Evaluation_numGate_highorder.src.trotterlib.config import DEFAULT_BASIS, DEFAULT_DISTANCE, PICKLE_DIR, PICKLE_DIR_GROUPED, POOL_PROCESSES, COLOR_MAP, MARKER_MAP, P_DIR, BETA, CA, DECOMPO_NUM, PF_RZ_LAYER
 
 def call_geometry(Hchain, distance):
-    if Hchain < 2:
-        raise ValueError("Hchain must be >= 2")
-
     # multiplicity と charge の規則
     if Hchain % 2 == 0:
         multiplicity = 1
@@ -77,7 +53,6 @@ def call_geometry(Hchain, distance):
 
 
 def geo(mol_type: str, distance: Optional[float] = None):
-    """call_geometry の薄いラッパー（距離のデフォルトを適用）。"""
     if distance is None:
         distance = DEFAULT_DISTANCE
     return call_geometry(mol_type, distance)
@@ -159,7 +134,7 @@ def min_hamiltonian_grouper(hamiltonian: QubitOperator, ham_name: str):
     grouped_ops = group_commuting_terms(hamiltonian)
     return grouped_ops, f"{ham_name}_grouping"
 
-
+# Morales's 8th order product formula
 def morales_8th_list():
     w_1to8 = [
         0.29137384767986663096528500968049,
@@ -304,9 +279,9 @@ def save_data(file_name: str, data: Any, gr: Optional[bool] = None):
     print(f"データを {file_path} に保存しました。")
 
 
-def load_data(file_name):
+def load_data(file_name): # フィッティング結果読み込み用
     current_dir = os.getcwd()
-    parent_dir = os.path.join(current_dir, "trotter_expo_coeff_gr")
+    parent_dir = os.path.join(current_dir, PICKLE_DIR_GROUPED)
     file_path = os.path.join(parent_dir, file_name)
     with open(file_path, "rb") as f:
         data = pickle.load(f)
@@ -377,7 +352,7 @@ def trotter_error_plt_qc_gr(
     error_log = np.log10(error_list_pertur)
     time_log = np.log10(t_values)
 
-    n_w = p_dir[num_w]
+    n_w = P_DIR[num_w]
 
     set_expo_error = error_log - n_w * time_log
     ave_coeff = np.mean(set_expo_error)
@@ -784,7 +759,7 @@ def trotter_error_plt(
     error_log = np.log10(error_list)
     time_log = np.log10(t_list)
 
-    n_w = p_dir[num_w]
+    n_w = P_DIR[num_w]
     set_expo_error = error_log - n_w * time_log
     ave_coeff = 10 ** (np.mean(set_expo_error))
 
@@ -846,8 +821,8 @@ def trotter_error_plt_qc(
     error_log = np.log10(error_list_pertur)
     time_log = np.log10(t_values)
 
-    # 指数は p_dir を使用（ヘルパ不使用）
-    n_w = p_dir[num_w]
+    # 指数は P_DIR を使用（ヘルパ不使用）
+    n_w = P_DIR[num_w]
     set_expo_error = error_log - n_w * time_log
     ave_coeff = 10 ** (np.mean(set_expo_error))
 
@@ -992,204 +967,17 @@ def calculation_cost(clique_list, num_w, ham_name):
     return total_exp, clique_num_dir
 
 
-# calculation_cost() による H-chain の PF ごとのパウリローテーションの個数
-decompo_num = {
-    "H2": {
-        "8th(Yoshida)": 220,
-        "2nd": 24,
-        "4th": 52,
-        "8th(Morales)": 248,
-        "10th(Morales)": 472,
-        "4th(new_3)": 108,
-        "4th(new_2)": 80,
-        "4(new_1)": 52,
-        "6(new_3)": 108,
-    },
-    "H3": {
-        "8th(Yoshida)": 1476,
-        "2nd": 118,
-        "4th": 312,
-        "8th(Morales)": 1670,
-        "10th(Morales)": 3222,
-        "4th(new_3)": 700,
-        "4th(new_2)": 506,
-        "4(new_1)": 312,
-        "6(new_3)": 700,
-    },
-    "H4": {
-        "8th(Yoshida)": 5436,
-        "2nd": 396,
-        "4th": 1116,
-        "8th(Morales)": 6156,
-        "10th(Morales)": 11916,
-        "4th(new_3)": 2556,
-        "4th(new_2)": 1836,
-        "4(new_1)": 1116,
-        "6(new_3)": 2556,
-    },
-    "H5": {
-        "8th(Yoshida)": 14200,
-        "2nd": 998,
-        "4th": 2884,
-        "8th(Morales)": 16086,
-        "10th(Morales)": 31174,
-        "4th(new_3)": 6656,
-        "4th(new_2)": 4770,
-        "4(new_1)": 2884,
-        "6(new_3)": 6656,
-    },
-    "H6": {
-        "8th(Yoshida)": 30648,
-        "2nd": 2116,
-        "4th": 6192,
-        "8th(Morales)": 34724,
-        "10th(Morales)": 67332,
-        "4th(new_3)": 14344,
-        "4th(new_2)": 10268,
-        "4(new_1)": 6192,
-        "6(new_3)": 14344,
-    },
-    "H7": {
-        "8th(Yoshida)": 58920,
-        "2nd": 4026,
-        "4th": 11868,
-        "8th(Morales)": 66762,
-        "10th(Morales)": 129498,
-        "4th(new_3)": 27552,
-        "4th(new_2)": 19710,
-        "4(new_1)": 11868,
-        "6(new_3)": 27552,
-    },
-    "H8": {
-        "8th(Yoshida)": 102556,
-        "2nd": 6964,
-        "4th": 20620,
-        "8th(Morales)": 116212,
-        "10th(Morales)": 225460,
-        "4th(new_3)": 47932,
-        "4th(new_2)": 34276,
-        "4(new_1)": 20620,
-        "6(new_3)": 47932,
-    },
-    "H9": {
-        "8th(Yoshida)": 170016,
-        "2nd": 11494,
-        "4th": 34140,
-        "8th(Morales)": 192662,
-        "10th(Morales)": 373830,
-        "4th(new_3)": 79432,
-        "4th(new_2)": 56786,
-        "4(new_1)": 34140,
-        "6(new_3)": 79432,
-    },
-    "H10": {
-        "8th(Yoshida)": 261960,
-        "2nd": 17660,
-        "4th": 52560,
-        "8th(Morales)": 296860,
-        "10th(Morales)": 576060,
-        "4th(new_3)": 122360,
-        "4th(new_2)": 87460,
-        "4(new_1)": 52560,
-        "6(new_3)": 122360,
-    },
-    "H11": {
-        "8th(Yoshida)": 385648,
-        "2nd": 25946,
-        "4th": 77332,
-        "8th(Morales)": 437034,
-        "10th(Morales)": 848122,
-        "4th(new_3)": 180104,
-        "4th(new_2)": 128718,
-        "4(new_1)": 77332,
-        "6(new_3)": 180104,
-    },
-    "H12": {
-        "8th(Yoshida)": 550620,
-        "2nd": 36988,
-        "4th": 110364,
-        "8th(Morales)": 623996,
-        "10th(Morales)": 1211004,
-        "4th(new_3)": 257116,
-        "4th(new_2)": 183740,
-        "4(new_1)": 110364,
-        "6(new_3)": 257116,
-    },
-    "H13": {
-        "8th(Yoshida)": 767016,
-        "2nd": 51462,
-        "4th": 153684,
-        "8th(Morales)": 869238,
-        "10th(Morales)": 1687014,
-        "4th(new_3)": 358128,
-        "4th(new_2)": 255906,
-        "4(new_1)": 153684,
-        "6(new_3)": 358128,
-    },
-    "H14": {
-        "8th(Yoshida)": 1037656,
-        "2nd": 69556,
-        "4th": 207856,
-        "8th(Morales)": 1175956,
-        "10th(Morales)": 2282356,
-        "4th(new_3)": 484456,
-        "4th(new_2)": 346156,
-        "4(new_1)": 207856,
-        "6(new_3)": 484456,
-    },
-    "H15": {
-        "8th(Yoshida)": 1385520,
-        "2nd": 92802,
-        "4th": 277476,
-        "8th(Morales)": 1570194,
-        "10th(Morales)": 3047586,
-        "4th(new_3)": 646824,
-        "4th(new_2)": 462150,
-        "4(new_1)": 277476,
-        "6(new_3)": 646824,
-    },
-}
-
-color_map = {
-    "2nd": "g",
-    "4th(new_3)": "r",
-    "4th(new_1)": "lightcoral",
-    "4th(new_2)": "b",
-    "6th(new_4)": "darkgreen",
-    "4th": "c",
-    "8th(Morales)": "m",
-    "10th(Morales)": "greenyellow",
-    "8th(Yoshida)": "orange",
-}
-marker_map = {
-    "2nd": "o",
-    "4th(new_3)": "v",
-    "4th(new_1)": "lightcoral",
-    "4th(new_2)": "<",
-    "6th(new_4)": "darkgreen",
-    "4th": "^",
-    "8th(Morales)": "h",
-    "10th(Morales)": "H",
-    "8th(Yoshida)": ">",
-}
-
-
 def exp_extrapolation(
     Hchain, n_w_list, show_bands=True, band_height=0.06, band_alpha=0.28
 ):
-    from collections import defaultdict
-
-    beta = 1.2
-
+    
     Hchain_list = [i for i in range(2, Hchain + 1)]
     Hchain_str = [f"H{i}" for i in range(2, Hchain + 1)]
 
-    CA = 1.59360010199040e-3
-    CA1 = 1.59360010199040e-4
-    eps = CA1
+    eps = CA / 10
 
     current_dir = os.getcwd()
-    parent_dir = os.path.join(current_dir, "trotter_expo_coeff_gr")
+    parent_dir = os.path.join(current_dir, PICKLE_DIR_GROUPED)
     total_dir = {}
 
     plt.figure(figsize=(8, 6), dpi=200)
@@ -1206,18 +994,16 @@ def exp_extrapolation(
         for n_w in n_w_list:
             if n_w == "10th(Morales)" and n_qubits == 30:  # 10th は H15 で未評価
                 continue
-            elif n_w == "4th(new_2)" and n_qubits > 28:
-                continue
 
             target_path = f"{ham_name}_Operator_{n_w}_ave"
             file_path = os.path.join(parent_dir, target_path)
             data = load_data(file_path)
 
             coeff = data
-            expo = p_dir[n_w]
+            expo = P_DIR[n_w]
 
             min_f = (
-                beta
+                BETA
                 * (eps ** (-(1 + (1 / expo))))
                 * (1 / expo)
                 * (coeff ** (1 / expo))
@@ -1225,7 +1011,7 @@ def exp_extrapolation(
             )
 
             # グルーピングあり
-            unit_expo = decompo_num[mol][n_w]
+            unit_expo = DECOMPO_NUM[mol][n_w]
             total_expo = unit_expo * min_f
 
             total_dir[n_qubits][n_w] = total_expo
@@ -1239,8 +1025,8 @@ def exp_extrapolation(
                 qubit,
                 gate,
                 ls="None",
-                marker=marker_map[pf],
-                color=color_map[pf],
+                marker=MARKER_MAP[pf],
+                color=COLOR_MAP[pf],
                 label=lb if qubit == num_qubits[0] else None,
             )
             # フィット用
@@ -1271,7 +1057,7 @@ def exp_extrapolation(
         x_right = ax.get_xlim()[1]
         xfit = np.logspace(np.log10(x.min()), np.log10(x_right), 400)
         yfit = A * (xfit**B)
-        ax.plot(xfit, yfit, "-", color=color_map.get(lb), alpha=0.9, linewidth=1.5)
+        ax.plot(xfit, yfit, "-", color=COLOR_MAP.get(lb), alpha=0.9, linewidth=1.5)
 
     # ---- 色帯の表示（トグル）----
     if show_bands and fit_params:
@@ -1300,7 +1086,7 @@ def exp_extrapolation(
                 xgrid[e],
                 ymin=0.0,
                 ymax=band_height,  # ★ 高さを引数で
-                color=color_map.get(lb, "0.6"),
+                color=COLOR_MAP.get(lb, "0.6"),
                 alpha=band_alpha,  # ★ 透明度を引数で
                 ec="none",
                 zorder=0,
@@ -1348,7 +1134,7 @@ def exp_extrapolation(
 
         proxies = [
             Patch(
-                facecolor=color_map[lb],
+                facecolor=COLOR_MAP[lb],
                 alpha=0.6,
                 edgecolor="none",
                 label=f"{lb} (lowest)",
@@ -1381,23 +1167,18 @@ def exp_extrapolation_diff(
       左Y: 総パウリ回転数（散布 + log–log フィット）
       右Y: 2本のフィット直線の絶対差 |Δ|
     依存：decompo_num, optimal_distance, jw_hamiltonian_maker, load_data, label_replace,
-         marker_map, color_map, p_dir
+         MARKER_MAP, COLOR_MAP, P_DIR
     """
-    from collections import defaultdict
 
     # 対象 H チェーン
     Hchain_list = [i for i in range(2, Hchain + 1)]
     Hchain_str = [f"H{i}" for i in range(2, Hchain + 1)]
     num_qubits = [i for i in range(4, (Hchain * 2) + 1, 2)]
 
-    CA = 1.59360010199040e-3
-    CA1 = 1.59360010199040e-4
-    eps = CA1
-
-    beta = 1.20
+    eps = CA / 10
 
     current_dir = os.getcwd()
-    parent_dir = os.path.join(current_dir, "trotter_expo_coeff_gr")
+    parent_dir = os.path.join(current_dir, PICKLE_DIR_GROUPED)
 
     # 総回転数の算出
     total_dir = {}
@@ -1410,18 +1191,16 @@ def exp_extrapolation_diff(
         for n_w in n_w_list:
             if n_w == "10th(Morales)" and n_qubits == 30:  # 10th は H15 で未評価
                 continue
-            elif n_w == "4th(new_2)" and n_qubits > 28:
-                continue
 
             target_path = f"{ham_name}_Operator_{n_w}_ave"
             file_path = os.path.join(parent_dir, target_path)
             data = load_data(file_path)
 
             coeff = data
-            expo = p_dir[n_w]
+            expo = P_DIR[n_w]
 
             min_f = (
-                beta
+                BETA
                 * (eps ** (-(1 + (1 / expo))))
                 * (1 / expo)
                 * (coeff ** (1 / expo))
@@ -1429,7 +1208,7 @@ def exp_extrapolation_diff(
             )
 
             # グルーピングあり
-            unit_expo = decompo_num[mol][n_w]
+            unit_expo = DECOMPO_NUM[mol][n_w]
             total_expo = unit_expo * min_f
 
             total_dir[n_qubits][n_w] = total_expo
@@ -1446,8 +1225,8 @@ def exp_extrapolation_diff(
                 qubit,
                 gate,
                 ls="None",
-                marker=marker_map[pf],
-                color=color_map[pf],
+                marker=MARKER_MAP[pf],
+                color=COLOR_MAP[pf],
                 label=lb if qubit == num_qubits[0] else None,
             )
             # フィット用
@@ -1484,7 +1263,7 @@ def exp_extrapolation_diff(
         x_right = ax.get_xlim()[1]
         xfit = np.logspace(np.log10(x.min()), np.log10(x_right), 400)
         yfit = A * (xfit**B)
-        ax.plot(xfit, yfit, "-", color=color_map.get(lb), alpha=0.9, linewidth=1.5)
+        ax.plot(xfit, yfit, "-", color=COLOR_MAP.get(lb), alpha=0.9, linewidth=1.5)
 
     # ---- 左軸：凡例 ----
     handles_exist, labels_exist = ax.get_legend_handles_labels()
@@ -1520,7 +1299,7 @@ def exp_extrapolation_diff(
                 "--",
                 lw=2.0,
                 alpha=0.9,
-                color=color_map.get(pf_a, None),
+                color=COLOR_MAP.get(pf_a, None),
                 label=f"|Δ|: {label_replace(pf_b)} − {label_replace(pf_a)}",
             )
             # 左軸とレンジを一致させて目盛位置をそろえる
@@ -1540,6 +1319,428 @@ def exp_extrapolation_diff(
 
     plt.tight_layout()
     plt.show()
+
+
+# =========================
+# depth 外挿
+# =========================
+
+
+def t_depth_extrapolation(
+        Hchain, n_w_list, rz_layer=None,show_bands=True, band_height=0.06, band_alpha=0.28
+        ):
+
+    eps = CA / 10
+
+    current_dir = os.getcwd()
+    parent_dir = os.path.join(current_dir, PICKLE_DIR_GROUPED)
+    total_dir = {}
+
+    num_qubits = [i for i in range(4,(Hchain*2)+1,2)]
+    Hchain_str = [f"H{i}" for i in range(2, Hchain + 1)]
+
+    plt.figure(figsize=(8, 6), dpi=200)
+
+    for qubits, mol in zip(num_qubits, Hchain_str):
+        if qubits % 4 == 0:
+            ham_name = mol + '_sto-3g_singlet_distance_100_charge_0_grouping'
+        else:
+            ham_name = mol + '_sto-3g_triplet_1+_distance_100_charge_1_grouping'
+
+        total_dir[qubits] = {}
+
+        for n_w in n_w_list:
+            if n_w == "10th(Morales)" and qubits == 30:  # 10th は H15 で未評価
+                continue
+
+            target_path = f"{ham_name}_Operator_{n_w}_ave"
+            file_path = os.path.join(parent_dir, target_path)
+            data = load_data(file_path)
+
+            coeff = data
+            expo = P_DIR[n_w]
+
+            # N_0 PF による分解に含まれる RZ 数 T-depth 計算なら実質パウリ回転数
+            N_0 = DECOMPO_NUM[mol][n_w]
+
+            # L_Z RZ のレイヤー数
+            pf_layer_rz = PF_RZ_LAYER[mol][n_w]
+
+            t = (eps / coeff * (expo + 1))**(1/expo)
+            eps_qpe = eps * (expo / (expo + 1))
+            M_qpe = BETA / (eps_qpe * t)
+
+            # RZ の近似誤差は許容誤差の 1 パーセント
+            eps_rot = (t * 0.01 * eps) / (N_0 * M_qpe)
+            
+            # RZ 近似誤差 T = 3log2(1/eps_rot)
+            T_rot = 3 * np.log2(1/eps_rot)
+
+            # PF のユニタリ１回分の T-depth
+            D_T = pf_layer_rz * T_rot
+
+            # QPE QC 全体での T-depth
+            tot_dt = M_qpe * D_T
+
+            # QPE QC 全体での RZ レイヤー数
+            tot_rz_layer = M_qpe * pf_layer_rz
+
+            if qubits == 30:
+                print(f'T_rot:{T_rot} PF:{n_w}')
+
+            if rz_layer:
+                total_dir[qubits][n_w] =  tot_rz_layer
+            else:
+                total_dir[qubits][n_w] = tot_dt
+
+    series = defaultdict(lambda: {"x": [], "y": []})
+    for qubit, gate_dir in total_dir.items():
+        for pf, gate in gate_dir.items():
+            lb = label_replace(pf)
+            # 散布
+            plt.plot(qubit, gate, ls='None', marker=MARKER_MAP[pf], color=COLOR_MAP[pf],
+                     label=lb if qubit == num_qubits[0] else None)
+            # フィット用
+            series[pf]["x"].append(float(qubit))
+            series[pf]["y"].append(float(gate))
+
+    ax = plt.gca()
+    ax.set_xscale("log")
+    ax.set_yscale("log")
+
+    XMAX = 100
+    xmin_current, xmax_current = ax.get_xlim()
+    ax.set_xlim(xmin_current, max(xmax_current, XMAX))
+
+    # ---- フィット ----
+    fit_params = {}
+    for lb, d in series.items():
+        x = np.asarray(d["x"], dtype=float)
+        y = np.asarray(d["y"], dtype=float)
+        m = (x > 0) & (y > 0)
+        x, y = x[m], y[m]
+        if x.size < 2:
+            continue
+        B, log10A = np.polyfit(np.log10(x), np.log10(y), 1)
+        A = 10**log10A
+        fit_params[lb] = {"A": A, "B": B}
+
+        x_right = ax.get_xlim()[1]
+        xfit = np.logspace(np.log10(x.min()), np.log10(x_right), 400)
+        yfit = A * (xfit ** B)
+        ax.plot(xfit, yfit, '-', color=COLOR_MAP.get(lb), alpha=0.9, linewidth=1.5)
+
+    # ---- 色帯の表示（トグル）----
+    if show_bands and fit_params:
+        # 表示範囲に合わせて評価用グリッドを作成
+        x_left, x_right = ax.get_xlim()
+        xgrid = np.logspace(np.log10(x_left), np.log10(x_right), 2000)
+
+        labels_fit = list(fit_params.keys())
+        # 各ラベルの y(x)
+        Y = np.vstack([fit_params[lb]["A"] * (xgrid ** fit_params[lb]["B"]) for lb in labels_fit])
+        imin = np.argmin(Y, axis=0)   # 各 x で最小の系列のインデックス
+
+        # 勝者切替の境界
+        switch_idx = np.where(np.diff(imin) != 0)[0] + 1
+        bounds = np.r_[0, switch_idx, len(xgrid)-1]
+
+        winners_in_order = []
+        for s, e in zip(bounds[:-1], bounds[1:]):
+            lb = labels_fit[imin[s]]
+            if lb not in winners_in_order:
+                winners_in_order.append(lb)
+            ax.axvspan(xgrid[s], xgrid[e],
+                       ymin=0.0, ymax=band_height,  # ★ 高さを引数で
+                       color=COLOR_MAP.get(lb, "0.6"),
+                       alpha=band_alpha,            # ★ 透明度を引数で
+                       ec="none", zorder=0)
+
+        # 縦点線（任意）
+        for i in switch_idx:
+            ax.axvline(xgrid[i], linestyle=":", linewidth=1.0, color="k", alpha=0.5, zorder=1)
+
+    # ---- 凡例 ----
+    from matplotlib.patches import Patch
+    handles_exist, labels_exist = ax.get_legend_handles_labels()
+    seen = set()
+    handles_u, labels_u = [], []
+    for h, lab in zip(handles_exist, labels_exist):
+        if lab and lab not in seen:
+            handles_u.append(h); labels_u.append(lab); seen.add(lab)
+
+    # 色帯も凡例に出すなら（show_bands True のときだけ）
+    if show_bands and fit_params:
+        # winners_in_order を上で作っているので、無ければ復元
+        if 'winners_in_order' not in locals():
+            x_left, x_right = ax.get_xlim()
+            xgrid = np.logspace(np.log10(x_left), np.log10(x_right), 2000)
+            labels_fit = list(fit_params.keys())
+            Y = np.vstack([fit_params[lb]["A"] * (xgrid ** fit_params[lb]["B"]) for lb in labels_fit])
+            imin = np.argmin(Y, axis=0)
+            switch_idx = np.where(np.diff(imin) != 0)[0] + 1
+            bounds = np.r_[0, switch_idx, len(xgrid)-1]
+            winners_in_order = []
+            for s, e in zip(bounds[:-1], bounds[1:]):
+                lb = labels_fit[imin[s]]
+                if lb not in winners_in_order:
+                    winners_in_order.append(lb)
+
+        proxies = [Patch(facecolor=COLOR_MAP[lb], alpha=0.6, edgecolor="none", label=f"{lb} (lowest)")
+                   for lb in winners_in_order
+                   if f"{lb} (lowest)" not in seen]
+        handles_u += proxies
+        labels_u += [p.get_label() for p in proxies]
+
+    ax.legend(handles_u, labels_u, loc="upper left", framealpha=0.9)
+
+    # 軸など
+    ax.set_xlabel("Num qubits", fontsize=15)
+    if rz_layer:
+        ax.set_ylabel("Num RZ layer", fontsize=15)
+    else:
+        ax.set_ylabel("T-depth", fontsize=15)
+    ax.grid(True, which='minor', axis='y', linestyle=':', linewidth=0.5, alpha=0.35)
+    ax.grid(True, which='major', axis='y', linestyle='-', linewidth=0.8, alpha=0.6)
+    plt.show()
+
+
+def t_depth_extrapolation_diff(
+    Hchain,
+    rz_layer=None,
+    n_w_list=("4th(new_2)", "8th(Morales)"),
+    MIN_POS=1e-18,
+    X_MIN_CALC=4,
+    X_MAX_DISPLAY=100,
+):
+    """
+    2つの PF を指定して T-depth を比較するプロット関数（双Y軸）。
+
+      左Y: QPE 全体の T-depth（散布 + log–log フィット）
+      右Y: フィット直線同士の絶対差 |ΔT|（ログ）
+
+    - n_w_list, num_w_list は必ず 2 つずつ渡す
+    - スケーリング直線/Δ の評価は x >= X_MIN_CALC のみ
+    - x の右端は X_MAX_DISPLAY に固定
+
+    依存: decompo_num, PF_RZ_layer, optimal_distance,
+          jw_hamiltonian_maker, load_data, label_replace
+    """
+
+    eps = CA / 10
+
+    current_dir = os.getcwd()
+    parent_dir = os.path.join(current_dir, PICKLE_DIR_GROUPED)
+
+    # PF 表示名 → ラベル
+    label_map = {pf: label_replace(pf) for pf in n_w_list}
+    labels = [label_map[pf] for pf in n_w_list]
+
+    num_qubits = [i for i in range(4,(Hchain*2)+1,2)]
+    Hchain_str = [f"H{i}" for i in range(2, Hchain + 1)]
+
+    # ===== T-depth の計算 =====
+    total_dir = {}  # {n_qubits: {pf_key: T-depth}}
+
+    for qubits, mol in zip(num_qubits, Hchain_str):
+        if qubits % 4 == 0:
+            ham_name = mol + '_sto-3g_singlet_distance_100_charge_0_grouping'
+        else:
+            ham_name = mol + '_sto-3g_triplet_1+_distance_100_charge_1_grouping'
+
+        total_dir[qubits] = {}
+
+        for n_w in n_w_list:
+            if n_w == "10th(Morales)" and qubits == 30:  # 10th は H15 で未評価
+                continue
+
+            target_path = f"{ham_name}_Operator_{n_w}_ave"
+            file_path = os.path.join(parent_dir, target_path)
+            data = load_data(file_path)
+
+            coeff = data
+            expo = P_DIR[n_w]
+
+            # N_0 PF による分解に含まれる RZ 数 T-depth 計算なら実質パウリ回転数
+            N_0 = DECOMPO_NUM[mol][n_w]
+
+            # L_Z RZ のレイヤー数
+            pf_layer_rz = PF_RZ_LAYER[mol][n_w]
+
+            t = (eps / coeff * (expo + 1))**(1/expo)
+            eps_qpe = eps * (expo / (expo + 1))
+            M_qpe = BETA / (eps_qpe * t)
+
+            # RZ の近似誤差は許容誤差の 1 パーセント
+            eps_rot = (t * 0.01 * eps) / (N_0 * M_qpe)
+            
+            # RZ 近似誤差 T = 3log2(1/eps_rot)
+            T_rot = 3 * np.log2(1/eps_rot)
+
+            # PF のユニタリ１回分の T-depth
+            D_T = pf_layer_rz * T_rot
+
+            # QPE QC 全体での T-depth
+            tot_dt = M_qpe * D_T
+
+            # QPE QC 全体での RZ レイヤー数
+            tot_rz_layer = M_qpe * pf_layer_rz
+
+            if qubits == 30:
+                print(f'T_rot:{T_rot} PF:{n_w}')
+
+            if rz_layer:
+                total_dir[qubits][n_w] =  tot_rz_layer
+            else:
+                total_dir[qubits][n_w] = tot_dt
+
+    # ===== プロット（左Y: T-depth, 右Y: 差分）=====
+    fig, ax = plt.subplots(figsize=(8,6), dpi=200)
+    ax2 = ax.twinx()
+
+    # 散布用データ（キーは pf
+    series = defaultdict(lambda: {"x": [], "y": []})
+    for qubit, gdict in total_dir.items():
+        for pf in n_w_list:
+            if pf not in gdict:
+                continue
+            lb = label_map[pf]  # 表示用ラベル
+
+            # 散布図
+            ax.plot(
+                qubit,
+                gdict[pf],
+                ls="None",
+                marker=MARKER_MAP.get(pf, "o"),       # ← pf で引く
+                color=COLOR_MAP.get(pf, None),       # ← pf で引く
+                label=lb,
+            )
+
+            # フィット用データを pf キーで保持
+            series[pf]["x"].append(float(qubit))
+            series[pf]["y"].append(float(gdict[pf]))
+
+    # 左軸スケール
+    ax.set_xscale("log")
+    ax.set_yscale("log")
+
+    x_left_auto, _ = ax.get_xlim()
+    ax.set_xlim(x_left_auto, X_MAX_DISPLAY)
+
+    # ===== log–log フィット =====
+    fit_params = {}  # キーは pf
+    xfit_lo = max(X_MIN_CALC, x_left_auto)
+    xfit_hi = X_MAX_DISPLAY
+
+    for pf in n_w_list:
+        if pf not in series:
+            continue
+
+        x = np.asarray(series[pf]["x"], float)
+        y = np.asarray(series[pf]["y"], float)
+        m = (x > 0) & (y > 0)
+        if m.sum() < 2:
+            continue
+
+        B, log10A = np.polyfit(np.log10(x[m]), np.log10(y[m]), 1)
+        A = 10.0 ** log10A
+        fit_params[pf] = {"A": A, "B": B}
+
+        if xfit_hi > xfit_lo:
+            xx = np.logspace(np.log10(xfit_lo), np.log10(xfit_hi), 400)
+            ax.plot(
+                xx,
+                A * xx ** B,
+                "-",
+                color=COLOR_MAP.get(pf),
+                lw=1.0,
+                alpha=0.95,
+            )
+            # デバッグ用: 100qubit 時の T-depth フィット値
+            print(f"{label_map[pf]}_Tdepth_at_100qubits = {A * 100.0 ** B}")
+
+    # ===== 右軸: フィット直線の差 |ΔT| =====
+    # n_w_list の順に 2 個の pf があり、両方フィットできているときだけ描画
+    pf_for_diff = [pf for pf in n_w_list if pf in fit_params]
+    if len(pf_for_diff) == 2:
+        pf_a, pf_b = pf_for_diff  # 表示順を n_w_list に揃える
+
+        def yfit(pf, x):
+            A = fit_params[pf]["A"]
+            B = fit_params[pf]["B"]
+            return A * x ** B
+
+        if xfit_hi > xfit_lo:
+            xx = np.logspace(np.log10(xfit_lo), np.log10(xfit_hi), 1200)
+            diff = np.maximum(np.abs(yfit(pf_a, xx) - yfit(pf_b, xx)), MIN_POS)
+            ax2.plot(
+                xx,
+                diff,
+                "--",
+                lw=2.0,
+                alpha=0.9,
+                color=COLOR_MAP.get(pf_a),
+                label=f"|{label_map[pf_b]} - {label_map[pf_a]}|",
+            )
+            ax2.set_yscale("log")
+
+    # ===== 目盛を左右で揃え、10^k 表記にする =====
+    for a in (ax, ax2):
+        a.yaxis.set_major_locator(LogLocator(base=10))
+        a.yaxis.set_major_formatter(LogFormatterMathtext(base=10))
+        a.yaxis.set_minor_locator(LogLocator(base=10, subs=range(2, 10)))
+        a.yaxis.set_minor_formatter(plt.NullFormatter())
+
+    ax2.set_ylim(ax.get_ylim())
+
+    # ===== 凡例 =====
+    h, l = ax.get_legend_handles_labels()
+    seen = set()
+    h_u, l_u = [], []
+    for hh, ll in zip(h, l):
+        if ll not in seen:
+            h_u.append(hh)
+            l_u.append(ll)
+            seen.add(ll)
+
+    hr, lr = ax2.get_legend_handles_labels()
+    if hr:
+        h_u += hr
+        l_u += lr
+
+    ax.legend(h_u, l_u, loc="upper left", framealpha=0.9)
+
+    # 軸ラベル
+    ax.set_xlabel("Num qubits", fontsize=15)
+    if rz_layer:
+        ax.set_ylabel("Num RZ layer", fontsize=15)
+        ax2.set_ylabel("Difference in Num RZ layer", fontsize=15)
+    else:
+        ax.set_ylabel("T-depth", fontsize=15)
+        ax2.set_ylabel("Difference in T-depth", fontsize=15)
+
+    # グリッド
+    ax.grid(
+        True,
+        which="major",
+        axis="y",
+        linestyle="-",
+        linewidth=0.8,
+        alpha=0.6,
+    )
+    ax.grid(
+        True,
+        which="minor",
+        axis="y",
+        linestyle=":",
+        linewidth=0.5,
+        alpha=0.35,
+    )
+
+    plt.tight_layout()
+    plt.show()
+
+
 
 
 # =========================
@@ -1721,9 +1922,7 @@ def beta_scaling(
 
 
 def best_product_formula_all(mol, ham_name, n_w_list):
-    CA = 1.59360010199040e-3
     CA_list = [CA * (10 ** (-0.01 * i)) for i in range(-200, 300)]
-    beta = 1.2
 
     result = {str(pair): [] for pair in n_w_list}
     CA_exp = {str(pair): [] for pair in n_w_list}
@@ -1733,7 +1932,7 @@ def best_product_formula_all(mol, ham_name, n_w_list):
     total_list = []
 
     for num_w in n_w_list:
-        unit_expo = decompo_num[mol][num_w]
+        unit_expo = DECOMPO_NUM[mol][num_w]
 
         cost_dir[str(num_w)] = unit_expo
 
@@ -1741,9 +1940,12 @@ def best_product_formula_all(mol, ham_name, n_w_list):
         # target_path = f"{ham_name}_Operator_{num_w}"
 
         try:
+            # p(次数) 固定
             data = load_data(target_path)
-            expo_dir[str(num_w)] = p_dir[num_w]
+            expo_dir[str(num_w)] = P_DIR[num_w]
             coeff_dir[str(num_w)] = data
+
+            # p(次数) 固定なし
             # expo_dir[str(num_w)] = data['expo']
             # coeff_dir[str(num_w)] = data['coeff']
 
@@ -1764,7 +1966,7 @@ def best_product_formula_all(mol, ham_name, n_w_list):
             expo = float(expo)
             coeff = float(coeff)
             min_f = (
-                beta
+                BETA
                 * (error_E ** (-(1 + (1 / expo))))
                 * (1 / expo)
                 * (coeff ** (1 / expo))
@@ -1791,7 +1993,6 @@ def best_product_formula_all(mol, ham_name, n_w_list):
 
 
 def efficient_accuracy_range_plt_grouper(Hchain, n_w_list):
-    CA = 1.59360010199040e-3
     xdic = {}
     dic = {str(n_w): {} for n_w in n_w_list}
 
@@ -1858,7 +2059,7 @@ def efficient_accuracy_range_plt_grouper(Hchain, n_w_list):
             return x_base + x_offsets[x_base][shape]
 
         for label, subsets in data.items():
-            color = color_map[label]  # グループ (w2, w4, w8) の色を取得
+            color = COLOR_MAP[label]  # グループ (w2, w4, w8) の色を取得
             for shape, y_range in subsets.items():
                 x_base = xdic[shape]  # 基準横軸値を取得
                 x_unique = get_unique_x(x_base, shape, label)  # 一意の横軸位置を取得

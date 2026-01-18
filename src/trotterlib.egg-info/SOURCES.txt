@@ -1,0 +1,16 @@
+README.md
+pyproject.toml
+src/trotterlib/chemistry_hamiltonian.py
+src/trotterlib/config.py
+src/trotterlib/cost_extrapolation.py
+src/trotterlib/eig_error.py
+src/trotterlib/io_cache.py
+src/trotterlib/matrix_multiply.py
+src/trotterlib/matrix_pf_build.py
+src/trotterlib/plots_timeevo_error.py
+src/trotterlib/product_formula.py
+src/trotterlib/qpe_beta.py
+src/trotterlib.egg-info/PKG-INFO
+src/trotterlib.egg-info/SOURCES.txt
+src/trotterlib.egg-info/dependency_links.txt
+src/trotterlib.egg-info/top_level.txt
