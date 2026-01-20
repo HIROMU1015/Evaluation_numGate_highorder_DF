@@ -1,35 +1,42 @@
 from __future__ import annotations
 
 import math
-import os
 from collections import defaultdict
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, DefaultDict, Dict, List, Optional, Sequence, Set, Tuple
 
-import numpy as np  # type: ignore
-import matplotlib.pyplot as plt  # type: ignore
-from matplotlib.patches import Patch  # type: ignore
-from matplotlib.ticker import LogFormatterMathtext, LogLocator  # type: ignore
+import numpy as np
+import matplotlib.pyplot as plt
+from matplotlib.patches import Patch
+from matplotlib.ticker import LogFormatterMathtext, LogLocator
 
-from Evaluation_numGate_highorder.src.trotterlib.config import (
+from .config import (
     CA,
     BETA,
-    PICKLE_DIR_GROUPED,
+    TARGET_ERROR,
     COLOR_MAP,
     MARKER_MAP,
+    PFLabel,
     P_DIR,
     DECOMPO_NUM,
     PF_RZ_LAYER,
 )
 
-from Evaluation_numGate_highorder.src.trotterlib.io_cache import load_data, label_replace
-from Evaluation_numGate_highorder.src.trotterlib.chemistry_hamiltonian import jw_hamiltonian_maker
-from Evaluation_numGate_highorder.src.trotterlib.product_formula import _get_w_list
+from .io_cache import load_data, label_replace
+from .chemistry_hamiltonian import jw_hamiltonian_maker
+from .product_formula import _get_w_list
+from .analysis_utils import loglog_fit
+from .plot_utils import set_loglog_axes, unique_legend_entries
 
 
-def calculation_cost(clique_list, num_w, ham_name):
+def calculation_cost(
+    clique_list: Sequence[Sequence[Any]],
+    num_w: PFLabel | int,
+    ham_name: str,
+) -> Tuple[int, Dict[int, int]]:
     """
     分解数計算用(decompo_num) clique_num_dir にそのクリークに含まれる項をインデックス付きで登録
     """
+    _ = ham_name  # kept for compatibility; not used
 
     clique_num_dir = {}
     for i, clique in enumerate(clique_list):
@@ -43,6 +50,9 @@ def calculation_cost(clique_list, num_w, ham_name):
     if num_w == 0:
         total_exp = sum(clique_num_dir.values())
         return total_exp, clique_num_dir
+
+    if isinstance(num_w, int):
+        raise ValueError(f"Unsupported num_w: {num_w}")
 
     w_list = _get_w_list(num_w)
     m = len(w_list)
@@ -100,82 +110,36 @@ def calculation_cost(clique_list, num_w, ham_name):
     return total_exp, clique_num_dir
 
 
-def exp_extrapolation(
-    Hchain, n_w_list, show_bands=True, band_height=0.06, band_alpha=0.28
-):
-    
-    Hchain_list = [i for i in range(2, Hchain + 1)]
-    Hchain_str = [f"H{i}" for i in range(2, Hchain + 1)]
-
-    eps = CA / 10
-
-    current_dir = os.getcwd()
-    parent_dir = os.path.join(current_dir, PICKLE_DIR_GROUPED)
-    total_dir = {}
-
-    plt.figure(figsize=(8, 6), dpi=200)
-
+def _hchain_series(Hchain: int) -> Tuple[List[int], List[str], List[int]]:
+    """H-chain の系列と対応するラベル・量子ビット数を返す。"""
+    chain_list = [i for i in range(2, Hchain + 1)]
+    chain_str = [f"H{i}" for i in chain_list]
     num_qubits = [i for i in range(4, (Hchain * 2) + 1, 2)]
+    return chain_list, chain_str, num_qubits
 
-    for chain, qubit, mol in zip(Hchain_list, num_qubits, Hchain_str):
-        distance = 1.0
-        _, _, ham_name, n_qubits = jw_hamiltonian_maker(chain, distance)
-        ham_name = ham_name + "_grouping"
 
-        total_dir[n_qubits] = {}
+def _compute_min_f(eps: float, expo: float, coeff: float) -> float:
+    """外挿の最小コスト係数 min_f を計算する。"""
+    return (
+        BETA
+        * (eps ** (-(1 + (1 / expo))))
+        * (1 / expo)
+        * (coeff ** (1 / expo))
+        * (expo + 1) ** (1 + (1 / expo))
+    )
 
-        for n_w in n_w_list:
-            if n_w == "10th(Morales)" and n_qubits == 30:  # 10th は H15 で未評価
-                continue
 
-            target_path = f"{ham_name}_Operator_{n_w}_ave"
-            file_path = os.path.join(parent_dir, target_path)
-            data = load_data(file_path)
-
-            coeff = data
-            expo = P_DIR[n_w]
-
-            min_f = (
-                BETA
-                * (eps ** (-(1 + (1 / expo))))
-                * (1 / expo)
-                * (coeff ** (1 / expo))
-                * (expo + 1) ** (1 + (1 / expo))
-            )
-
-            # グルーピングあり
-            unit_expo = DECOMPO_NUM[mol][n_w]
-            total_expo = unit_expo * min_f
-
-            total_dir[n_qubits][n_w] = total_expo
-
-    series = defaultdict(lambda: {"x": [], "y": []})
-    for qubit, gate_dir in total_dir.items():
-        for pf, gate in gate_dir.items():
-            lb = label_replace(pf)
-            # 散布
-            plt.plot(
-                qubit,
-                gate,
-                ls="None",
-                marker=MARKER_MAP[pf],
-                color=COLOR_MAP[pf],
-                label=lb if qubit == num_qubits[0] else None,
-            )
-            # フィット用
-            series[pf]["x"].append(float(qubit))
-            series[pf]["y"].append(float(gate))
-
-    ax = plt.gca()
-    ax.set_xscale("log")
-    ax.set_yscale("log")
-
-    XMAX = 100
-    xmin_current, xmax_current = ax.get_xlim()
-    ax.set_xlim(xmin_current, max(xmax_current, XMAX))
-
+def _apply_loglog_fit_with_bands(
+    ax: Any,
+    series: Dict[str, Dict[str, List[float]]],
+    *,
+    show_bands: bool,
+    band_height: float,
+    band_alpha: float,
+) -> Dict[str, Dict[str, float]]:
+    """log-log フィットと色帯描画、凡例の付与を共通化する。"""
     # ---- フィット ----
-    fit_params = {}
+    fit_params: Dict[str, Dict[str, float]] = {}
     for lb, d in series.items():
         x = np.asarray(d["x"], dtype=float)
         y = np.asarray(d["y"], dtype=float)
@@ -183,8 +147,9 @@ def exp_extrapolation(
         x, y = x[m], y[m]
         if x.size < 2:
             continue
-        B, log10A = np.polyfit(np.log10(x), np.log10(y), 1)
-        A = 10**log10A
+        fit = loglog_fit(x, y, mask_nonpositive=True)
+        A = fit.coeff
+        B = fit.slope
         fit_params[lb] = {"A": A, "B": B}
 
         x_right = ax.get_xlim()[1]
@@ -192,6 +157,7 @@ def exp_extrapolation(
         yfit = A * (xfit**B)
         ax.plot(xfit, yfit, "-", color=COLOR_MAP.get(lb), alpha=0.9, linewidth=1.5)
 
+    winners_in_order: List[str] = []
     # ---- 色帯の表示（トグル）----
     if show_bands and fit_params:
         # 表示範囲に合わせて評価用グリッドを作成
@@ -209,7 +175,6 @@ def exp_extrapolation(
         switch_idx = np.where(np.diff(imin) != 0)[0] + 1
         bounds = np.r_[0, switch_idx, len(xgrid) - 1]
 
-        winners_in_order = []
         for s, e in zip(bounds[:-1], bounds[1:]):
             lb = labels_fit[imin[s]]
             if lb not in winners_in_order:
@@ -218,9 +183,9 @@ def exp_extrapolation(
                 xgrid[s],
                 xgrid[e],
                 ymin=0.0,
-                ymax=band_height,  # ★ 高さを引数で
+                ymax=band_height,
                 color=COLOR_MAP.get(lb, "0.6"),
-                alpha=band_alpha,  # ★ 透明度を引数で
+                alpha=band_alpha,
                 ec="none",
                 zorder=0,
             )
@@ -228,43 +193,20 @@ def exp_extrapolation(
         # 縦点線（任意）
         for i in switch_idx:
             ax.axvline(
-                xgrid[i], linestyle=":", linewidth=1.0, color="k", alpha=0.5, zorder=1
+                xgrid[i],
+                linestyle=":",
+                linewidth=1.0,
+                color="k",
+                alpha=0.5,
+                zorder=1,
             )
 
     # ---- 凡例 ----
-    from matplotlib.patches import Patch
-
     handles_exist, labels_exist = ax.get_legend_handles_labels()
-    seen = set()
-    handles_u, labels_u = [], []
-    for h, lab in zip(handles_exist, labels_exist):
-        if lab and lab not in seen:
-            handles_u.append(h)
-            labels_u.append(lab)
-            seen.add(lab)
+    handles_u, labels_u = unique_legend_entries(handles_exist, labels_exist)
+    seen = set(labels_u)
 
-    # 色帯も凡例に出すなら（show_bands True のときだけ）
-    if show_bands and fit_params:
-        # winners_in_order を上で作っているので、無ければ復元
-        if "winners_in_order" not in locals():
-            x_left, x_right = ax.get_xlim()
-            xgrid = np.logspace(np.log10(x_left), np.log10(x_right), 2000)
-            labels_fit = list(fit_params.keys())
-            Y = np.vstack(
-                [
-                    fit_params[lb]["A"] * (xgrid ** fit_params[lb]["B"])
-                    for lb in labels_fit
-                ]
-            )
-            imin = np.argmin(Y, axis=0)
-            switch_idx = np.where(np.diff(imin) != 0)[0] + 1
-            bounds = np.r_[0, switch_idx, len(xgrid) - 1]
-            winners_in_order = []
-            for s, e in zip(bounds[:-1], bounds[1:]):
-                lb = labels_fit[imin[s]]
-                if lb not in winners_in_order:
-                    winners_in_order.append(lb)
-
+    if show_bands and winners_in_order:
         proxies = [
             Patch(
                 facecolor=COLOR_MAP[lb],
@@ -276,9 +218,89 @@ def exp_extrapolation(
             if f"{lb} (lowest)" not in seen
         ]
         handles_u += proxies
-        labels_u += [p.get_label() for p in proxies]
+        labels_u += [str(p.get_label()) for p in proxies]
 
     ax.legend(handles_u, labels_u, loc="upper left", framealpha=0.9)
+    return fit_params
+
+
+def exp_extrapolation(
+    Hchain: int,
+    n_w_list: Sequence[PFLabel],
+    show_bands: bool = True,
+    band_height: float = 0.06,
+    band_alpha: float = 0.28,
+    use_original: bool = False,
+) -> None:
+    """PF 別に総コストの外挿をプロットする（use_original=True で original を参照）。"""
+    Hchain_list, Hchain_str, num_qubits = _hchain_series(Hchain)
+
+    target_error = TARGET_ERROR
+
+    total_dir: Dict[int, Dict[str, float]] = {}
+
+    plt.figure(figsize=(8, 6), dpi=200)
+
+    # 係数データを読み込んで総回転数を算出
+    for chain, qubit, mol in zip(Hchain_list, num_qubits, Hchain_str):
+        distance = 1.0
+        _, _, ham_name, n_qubits = jw_hamiltonian_maker(chain, distance)
+        ham_name = ham_name + "_grouping"
+
+        total_dir[n_qubits] = {}
+
+        for n_w in n_w_list:
+            if n_w == "10th(Morales)" and n_qubits == 30:  # 10th は H15 で未評価
+                continue
+
+            target_path = f"{ham_name}_Operator_{n_w}_ave"
+            data = load_data(target_path, use_original=use_original)
+
+            coeff = data
+            expo = P_DIR[n_w]
+
+            min_f = _compute_min_f(target_error, expo, coeff)
+
+            # グルーピングあり
+            unit_expo = DECOMPO_NUM[mol][n_w]
+            total_expo = unit_expo * min_f
+
+            total_dir[n_qubits][n_w] = total_expo
+
+    # プロット用の系列を構築
+    series: DefaultDict[str, Dict[str, List[float]]] = defaultdict(
+        lambda: {"x": [], "y": []}
+    )
+    for qubit, gate_dir in total_dir.items():
+        for pf, gate in gate_dir.items():
+            lb = label_replace(pf)
+            # 散布
+            plt.plot(
+                qubit,
+                gate,
+                ls="None",
+                marker=MARKER_MAP[pf],
+                color=COLOR_MAP[pf],
+                label=lb if qubit == num_qubits[0] else None,
+            )
+            # フィット用
+            series[pf]["x"].append(float(qubit))
+            series[pf]["y"].append(float(gate))
+
+    ax = plt.gca()
+    set_loglog_axes(ax)
+
+    XMAX = 100
+    xmin_current, xmax_current = ax.get_xlim()
+    ax.set_xlim(xmin_current, max(xmax_current, XMAX))
+
+    _apply_loglog_fit_with_bands(
+        ax,
+        series,
+        show_bands=show_bands,
+        band_height=band_height,
+        band_alpha=band_alpha,
+    )
 
     # 軸など
     ax.set_xlabel("Num qubits", fontsize=15)
@@ -289,32 +311,30 @@ def exp_extrapolation(
 
 
 def exp_extrapolation_diff(
-    Hchain,
-    n_w_list=("4th(new_2)", "8th(Morales)"),
-    MIN_POS=1e-18,
-    X_MIN_CALC=4,
-    X_MAX_DISPLAY=100,
-):
+    Hchain: int,
+    n_w_list: Sequence[PFLabel] = ("4th(new_2)", "8th(Morales)"),
+    MIN_POS: float = 1e-18,
+    X_MIN_CALC: float = 4,
+    X_MAX_DISPLAY: float = 100,
+    use_original: bool = False,
+) -> None:
     """
     単一図（左右Y軸）:
       左Y: 総パウリ回転数（散布 + log–log フィット）
       右Y: 2本のフィット直線の絶対差 |Δ|
     依存：decompo_num, optimal_distance, jw_hamiltonian_maker, load_data, label_replace,
          MARKER_MAP, COLOR_MAP, P_DIR
+    use_original=True で trotter_expo_coeff_gr_original を参照する。
     """
 
     # 対象 H チェーン
-    Hchain_list = [i for i in range(2, Hchain + 1)]
-    Hchain_str = [f"H{i}" for i in range(2, Hchain + 1)]
-    num_qubits = [i for i in range(4, (Hchain * 2) + 1, 2)]
+    Hchain_list, Hchain_str, num_qubits = _hchain_series(Hchain)
 
-    eps = CA / 10
+    target_error = TARGET_ERROR
 
-    current_dir = os.getcwd()
-    parent_dir = os.path.join(current_dir, PICKLE_DIR_GROUPED)
 
     # 総回転数の算出
-    total_dir = {}
+    total_dir: Dict[int, Dict[str, float]] = {}
     for chain, qubit, mol in zip(Hchain_list, num_qubits, Hchain_str):
         distance = 1.0
         _, _, ham_name, n_qubits = jw_hamiltonian_maker(chain, distance)
@@ -326,19 +346,12 @@ def exp_extrapolation_diff(
                 continue
 
             target_path = f"{ham_name}_Operator_{n_w}_ave"
-            file_path = os.path.join(parent_dir, target_path)
-            data = load_data(file_path)
+            data = load_data(target_path, use_original=use_original)
 
             coeff = data
             expo = P_DIR[n_w]
 
-            min_f = (
-                BETA
-                * (eps ** (-(1 + (1 / expo))))
-                * (1 / expo)
-                * (coeff ** (1 / expo))
-                * (expo + 1) ** (1 + (1 / expo))
-            )
+            min_f = _compute_min_f(target_error, expo, coeff)
 
             # グルーピングあり
             unit_expo = DECOMPO_NUM[mol][n_w]
@@ -349,7 +362,9 @@ def exp_extrapolation_diff(
     # ---- プロット（単一図・双Y軸）----
     plt.figure(figsize=(8, 6), dpi=200)
 
-    series = defaultdict(lambda: {"x": [], "y": []})
+    series: DefaultDict[str, Dict[str, List[float]]] = defaultdict(
+        lambda: {"x": [], "y": []}
+    )
     for qubit, gate_dir in total_dir.items():
         for pf, gate in gate_dir.items():
             lb = label_replace(pf)
@@ -370,46 +385,21 @@ def exp_extrapolation_diff(
     ax2 = ax.twinx()
 
     # 軸
-    ax.set_xscale("log")
-    ax.set_yscale("log")
+    set_loglog_axes(ax)
 
     # x の右端を固定
     x_left_auto, _ = ax.get_xlim()
     ax.set_xlim(x_left_auto, X_MAX_DISPLAY)
 
-    # ---- フィット ----
-    fit_params = {}
     xfit_lo = max(X_MIN_CALC, x_left_auto)
     xfit_hi = X_MAX_DISPLAY
-
-    for lb, d in series.items():
-        x = np.asarray(d["x"], dtype=float)
-        y = np.asarray(d["y"], dtype=float)
-        m = (x > 0) & (y > 0)
-        x, y = x[m], y[m]
-        if x.size < 2:
-            continue
-        B, log10A = np.polyfit(np.log10(x), np.log10(y), 1)
-        A = 10**log10A
-        fit_params[lb] = {"A": A, "B": B}
-
-        x_right = ax.get_xlim()[1]
-        xfit = np.logspace(np.log10(x.min()), np.log10(x_right), 400)
-        yfit = A * (xfit**B)
-        ax.plot(xfit, yfit, "-", color=COLOR_MAP.get(lb), alpha=0.9, linewidth=1.5)
-
-    # ---- 左軸：凡例 ----
-    handles_exist, labels_exist = ax.get_legend_handles_labels()
-    seen = set()
-    handles_u = []
-    labels_u = []
-    for h, lab in zip(handles_exist, labels_exist):
-        if lab and lab not in seen:
-            handles_u.append(h)
-            labels_u.append(lab)
-            seen.add(lab)
-    if handles_u:
-        ax.legend(handles_u, labels_u, loc="upper left", framealpha=0.9)
+    fit_params = _apply_loglog_fit_with_bands(
+        ax,
+        series,
+        show_bands=False,
+        band_height=0.0,
+        band_alpha=0.0,
+    )
 
     # ---- 右軸：差分 |Δ| ----
     # フィット区間と同じ x 範囲 [xfit_lo, xfit_hi] で評価
@@ -455,20 +445,25 @@ def exp_extrapolation_diff(
 
 
 def t_depth_extrapolation(
-        Hchain, n_w_list, rz_layer=None,show_bands=True, band_height=0.06, band_alpha=0.28
-        ):
+    Hchain: int,
+    n_w_list: Sequence[PFLabel],
+    rz_layer: Optional[bool] = None,
+    show_bands: bool = True,
+    band_height: float = 0.06,
+    band_alpha: float = 0.28,
+    use_original: bool = False,
+) -> None:
+    """H-chain サイズに対する T-depth / RZ レイヤー数を外挿する（use_original=True で original を参照）。"""
 
-    eps = CA / 10
+    target_error = TARGET_ERROR
 
-    current_dir = os.getcwd()
-    parent_dir = os.path.join(current_dir, PICKLE_DIR_GROUPED)
-    total_dir = {}
+    total_dir: Dict[int, Dict[str, float]] = {}
 
-    num_qubits = [i for i in range(4,(Hchain*2)+1,2)]
-    Hchain_str = [f"H{i}" for i in range(2, Hchain + 1)]
+    _, Hchain_str, num_qubits = _hchain_series(Hchain)
 
     plt.figure(figsize=(8, 6), dpi=200)
 
+    # 係数データを読み込んで T-depth を算出
     for qubits, mol in zip(num_qubits, Hchain_str):
         if qubits % 4 == 0:
             ham_name = mol + '_sto-3g_singlet_distance_100_charge_0_grouping'
@@ -482,8 +477,7 @@ def t_depth_extrapolation(
                 continue
 
             target_path = f"{ham_name}_Operator_{n_w}_ave"
-            file_path = os.path.join(parent_dir, target_path)
-            data = load_data(file_path)
+            data = load_data(target_path, use_original=use_original)
 
             coeff = data
             expo = P_DIR[n_w]
@@ -494,12 +488,12 @@ def t_depth_extrapolation(
             # L_Z RZ のレイヤー数
             pf_layer_rz = PF_RZ_LAYER[mol][n_w]
 
-            t = (eps / coeff * (expo + 1))**(1/expo)
-            eps_qpe = eps * (expo / (expo + 1))
+            t = (target_error / coeff * (expo + 1))**(1/expo)
+            eps_qpe = target_error * (expo / (expo + 1))
             M_qpe = BETA / (eps_qpe * t)
 
             # RZ の近似誤差は許容誤差の 1 パーセント
-            eps_rot = (t * 0.01 * eps) / (N_0 * M_qpe)
+            eps_rot = (t * 0.01 * target_error) / (N_0 * M_qpe)
             
             # RZ 近似誤差 T = 3log2(1/eps_rot)
             T_rot = 3 * np.log2(1/eps_rot)
@@ -521,7 +515,9 @@ def t_depth_extrapolation(
             else:
                 total_dir[qubits][n_w] = tot_dt
 
-    series = defaultdict(lambda: {"x": [], "y": []})
+    series: DefaultDict[str, Dict[str, List[float]]] = defaultdict(
+        lambda: {"x": [], "y": []}
+    )
     for qubit, gate_dir in total_dir.items():
         for pf, gate in gate_dir.items():
             lb = label_replace(pf)
@@ -533,94 +529,19 @@ def t_depth_extrapolation(
             series[pf]["y"].append(float(gate))
 
     ax = plt.gca()
-    ax.set_xscale("log")
-    ax.set_yscale("log")
+    set_loglog_axes(ax)
 
     XMAX = 100
     xmin_current, xmax_current = ax.get_xlim()
     ax.set_xlim(xmin_current, max(xmax_current, XMAX))
 
-    # ---- フィット ----
-    fit_params = {}
-    for lb, d in series.items():
-        x = np.asarray(d["x"], dtype=float)
-        y = np.asarray(d["y"], dtype=float)
-        m = (x > 0) & (y > 0)
-        x, y = x[m], y[m]
-        if x.size < 2:
-            continue
-        B, log10A = np.polyfit(np.log10(x), np.log10(y), 1)
-        A = 10**log10A
-        fit_params[lb] = {"A": A, "B": B}
-
-        x_right = ax.get_xlim()[1]
-        xfit = np.logspace(np.log10(x.min()), np.log10(x_right), 400)
-        yfit = A * (xfit ** B)
-        ax.plot(xfit, yfit, '-', color=COLOR_MAP.get(lb), alpha=0.9, linewidth=1.5)
-
-    # ---- 色帯の表示（トグル）----
-    if show_bands and fit_params:
-        # 表示範囲に合わせて評価用グリッドを作成
-        x_left, x_right = ax.get_xlim()
-        xgrid = np.logspace(np.log10(x_left), np.log10(x_right), 2000)
-
-        labels_fit = list(fit_params.keys())
-        # 各ラベルの y(x)
-        Y = np.vstack([fit_params[lb]["A"] * (xgrid ** fit_params[lb]["B"]) for lb in labels_fit])
-        imin = np.argmin(Y, axis=0)   # 各 x で最小の系列のインデックス
-
-        # 勝者切替の境界
-        switch_idx = np.where(np.diff(imin) != 0)[0] + 1
-        bounds = np.r_[0, switch_idx, len(xgrid)-1]
-
-        winners_in_order = []
-        for s, e in zip(bounds[:-1], bounds[1:]):
-            lb = labels_fit[imin[s]]
-            if lb not in winners_in_order:
-                winners_in_order.append(lb)
-            ax.axvspan(xgrid[s], xgrid[e],
-                       ymin=0.0, ymax=band_height,  # ★ 高さを引数で
-                       color=COLOR_MAP.get(lb, "0.6"),
-                       alpha=band_alpha,            # ★ 透明度を引数で
-                       ec="none", zorder=0)
-
-        # 縦点線（任意）
-        for i in switch_idx:
-            ax.axvline(xgrid[i], linestyle=":", linewidth=1.0, color="k", alpha=0.5, zorder=1)
-
-    # ---- 凡例 ----
-    from matplotlib.patches import Patch
-    handles_exist, labels_exist = ax.get_legend_handles_labels()
-    seen = set()
-    handles_u, labels_u = [], []
-    for h, lab in zip(handles_exist, labels_exist):
-        if lab and lab not in seen:
-            handles_u.append(h); labels_u.append(lab); seen.add(lab)
-
-    # 色帯も凡例に出すなら（show_bands True のときだけ）
-    if show_bands and fit_params:
-        # winners_in_order を上で作っているので、無ければ復元
-        if 'winners_in_order' not in locals():
-            x_left, x_right = ax.get_xlim()
-            xgrid = np.logspace(np.log10(x_left), np.log10(x_right), 2000)
-            labels_fit = list(fit_params.keys())
-            Y = np.vstack([fit_params[lb]["A"] * (xgrid ** fit_params[lb]["B"]) for lb in labels_fit])
-            imin = np.argmin(Y, axis=0)
-            switch_idx = np.where(np.diff(imin) != 0)[0] + 1
-            bounds = np.r_[0, switch_idx, len(xgrid)-1]
-            winners_in_order = []
-            for s, e in zip(bounds[:-1], bounds[1:]):
-                lb = labels_fit[imin[s]]
-                if lb not in winners_in_order:
-                    winners_in_order.append(lb)
-
-        proxies = [Patch(facecolor=COLOR_MAP[lb], alpha=0.6, edgecolor="none", label=f"{lb} (lowest)")
-                   for lb in winners_in_order
-                   if f"{lb} (lowest)" not in seen]
-        handles_u += proxies
-        labels_u += [p.get_label() for p in proxies]
-
-    ax.legend(handles_u, labels_u, loc="upper left", framealpha=0.9)
+    _apply_loglog_fit_with_bands(
+        ax,
+        series,
+        show_bands=show_bands,
+        band_height=band_height,
+        band_alpha=band_alpha,
+    )
 
     # 軸など
     ax.set_xlabel("Num qubits", fontsize=15)
@@ -634,13 +555,14 @@ def t_depth_extrapolation(
 
 
 def t_depth_extrapolation_diff(
-    Hchain,
-    rz_layer=None,
-    n_w_list=("4th(new_2)", "8th(Morales)"),
-    MIN_POS=1e-18,
-    X_MIN_CALC=4,
-    X_MAX_DISPLAY=100,
-):
+    Hchain: int,
+    rz_layer: Optional[bool] = None,
+    n_w_list: Sequence[PFLabel] = ("4th(new_2)", "8th(Morales)"),
+    MIN_POS: float = 1e-18,
+    X_MIN_CALC: float = 4,
+    X_MAX_DISPLAY: float = 100,
+    use_original: bool = False,
+) -> None:
     """
     2つの PF を指定して T-depth を比較するプロット関数（双Y軸）。
 
@@ -653,22 +575,19 @@ def t_depth_extrapolation_diff(
 
     依存: decompo_num, PF_RZ_layer, optimal_distance,
           jw_hamiltonian_maker, load_data, label_replace
+    use_original=True で trotter_expo_coeff_gr_original を参照する。
     """
 
-    eps = CA / 10
+    target_error = TARGET_ERROR
 
-    current_dir = os.getcwd()
-    parent_dir = os.path.join(current_dir, PICKLE_DIR_GROUPED)
 
     # PF 表示名 → ラベル
     label_map = {pf: label_replace(pf) for pf in n_w_list}
-    labels = [label_map[pf] for pf in n_w_list]
-
     num_qubits = [i for i in range(4,(Hchain*2)+1,2)]
     Hchain_str = [f"H{i}" for i in range(2, Hchain + 1)]
 
     # ===== T-depth の計算 =====
-    total_dir = {}  # {n_qubits: {pf_key: T-depth}}
+    total_dir: Dict[int, Dict[str, float]] = {}  # {n_qubits: {pf_key: T-depth}}
 
     for qubits, mol in zip(num_qubits, Hchain_str):
         if qubits % 4 == 0:
@@ -683,8 +602,7 @@ def t_depth_extrapolation_diff(
                 continue
 
             target_path = f"{ham_name}_Operator_{n_w}_ave"
-            file_path = os.path.join(parent_dir, target_path)
-            data = load_data(file_path)
+            data = load_data(target_path, use_original=use_original)
 
             coeff = data
             expo = P_DIR[n_w]
@@ -695,12 +613,12 @@ def t_depth_extrapolation_diff(
             # L_Z RZ のレイヤー数
             pf_layer_rz = PF_RZ_LAYER[mol][n_w]
 
-            t = (eps / coeff * (expo + 1))**(1/expo)
-            eps_qpe = eps * (expo / (expo + 1))
+            t = (target_error / coeff * (expo + 1))**(1/expo)
+            eps_qpe = target_error * (expo / (expo + 1))
             M_qpe = BETA / (eps_qpe * t)
 
             # RZ の近似誤差は許容誤差の 1 パーセント
-            eps_rot = (t * 0.01 * eps) / (N_0 * M_qpe)
+            eps_rot = (t * 0.01 * target_error) / (N_0 * M_qpe)
             
             # RZ 近似誤差 T = 3log2(1/eps_rot)
             T_rot = 3 * np.log2(1/eps_rot)
@@ -723,11 +641,13 @@ def t_depth_extrapolation_diff(
                 total_dir[qubits][n_w] = tot_dt
 
     # ===== プロット（左Y: T-depth, 右Y: 差分）=====
-    fig, ax = plt.subplots(figsize=(8,6), dpi=200)
+    _fig, ax = plt.subplots(figsize=(8,6), dpi=200)
     ax2 = ax.twinx()
 
     # 散布用データ（キーは pf
-    series = defaultdict(lambda: {"x": [], "y": []})
+    series: DefaultDict[str, Dict[str, List[float]]] = defaultdict(
+        lambda: {"x": [], "y": []}
+    )
     for qubit, gdict in total_dir.items():
         for pf in n_w_list:
             if pf not in gdict:
@@ -749,8 +669,7 @@ def t_depth_extrapolation_diff(
             series[pf]["y"].append(float(gdict[pf]))
 
     # 左軸スケール
-    ax.set_xscale("log")
-    ax.set_yscale("log")
+    set_loglog_axes(ax)
 
     x_left_auto, _ = ax.get_xlim()
     ax.set_xlim(x_left_auto, X_MAX_DISPLAY)
@@ -770,8 +689,9 @@ def t_depth_extrapolation_diff(
         if m.sum() < 2:
             continue
 
-        B, log10A = np.polyfit(np.log10(x[m]), np.log10(y[m]), 1)
-        A = 10.0 ** log10A
+        fit = loglog_fit(x[m], y[m], mask_nonpositive=True)
+        A = fit.coeff
+        B = fit.slope
         fit_params[pf] = {"A": A, "B": B}
 
         if xfit_hi > xfit_lo:
@@ -793,7 +713,7 @@ def t_depth_extrapolation_diff(
     if len(pf_for_diff) == 2:
         pf_a, pf_b = pf_for_diff  # 表示順を n_w_list に揃える
 
-        def yfit(pf, x):
+        def yfit(pf: str, x: np.ndarray) -> np.ndarray:
             A = fit_params[pf]["A"]
             B = fit_params[pf]["B"]
             return A * x ** B
@@ -822,14 +742,7 @@ def t_depth_extrapolation_diff(
     ax2.set_ylim(ax.get_ylim())
 
     # ===== 凡例 =====
-    h, l = ax.get_legend_handles_labels()
-    seen = set()
-    h_u, l_u = [], []
-    for hh, ll in zip(h, l):
-        if ll not in seen:
-            h_u.append(hh)
-            l_u.append(ll)
-            seen.add(ll)
+    h_u, l_u = unique_legend_entries(*ax.get_legend_handles_labels())
 
     hr, lr = ax2.get_legend_handles_labels()
     if hr:
@@ -869,17 +782,26 @@ def t_depth_extrapolation_diff(
     plt.show()
 
 
-def best_product_formula_all(mol, ham_name, n_w_list):
+def best_product_formula_all(
+    mol: str,
+    ham_name: str,
+    n_w_list: Sequence[PFLabel],
+    use_original: bool = False,
+) -> Tuple[Dict[str, List[float]], List[Dict[str, float]], Dict[str, Optional[float]]]:
+    """精度掃引で最適な PF とコスト範囲を集計する（use_original=True で original を参照）。"""
     CA_list = [CA * (10 ** (-0.01 * i)) for i in range(-200, 300)]
 
-    result = {str(pair): [] for pair in n_w_list}
-    CA_exp = {str(pair): [] for pair in n_w_list}
-    expo_dir = {str(pair): None for pair in n_w_list}
-    coeff_dir = {str(pair): None for pair in n_w_list}
-    cost_dir = {str(pair): None for pair in n_w_list}
-    total_list = []
+    # PF ごとの結果テーブルを初期化
+    result: Dict[str, List[float]] = {str(pair): [] for pair in n_w_list}
+    CA_exp: Dict[str, Optional[float]] = {str(pair): None for pair in n_w_list}
+    expo_dir: Dict[str, Optional[float]] = {str(pair): None for pair in n_w_list}
+    coeff_dir: Dict[str, Optional[float]] = {str(pair): None for pair in n_w_list}
+    cost_dir: Dict[str, Optional[float]] = {str(pair): None for pair in n_w_list}
+    total_list: List[Dict[str, float]] = []
 
     for num_w in n_w_list:
+        if num_w == "10th(Morales)" and mol == "H15":
+            continue
         unit_expo = DECOMPO_NUM[mol][num_w]
 
         cost_dir[str(num_w)] = unit_expo
@@ -889,7 +811,7 @@ def best_product_formula_all(mol, ham_name, n_w_list):
 
         try:
             # p(次数) 固定
-            data = load_data(target_path)
+            data = load_data(target_path, use_original=use_original)
             expo_dir[str(num_w)] = P_DIR[num_w]
             coeff_dir[str(num_w)] = data
 
@@ -905,27 +827,23 @@ def best_product_formula_all(mol, ham_name, n_w_list):
     for error_E in CA_list:
         min_total_expo = float("inf")
         best_trotter = None
-        total = {}
+        total: Dict[str, float] = {}
         for num_w in n_w_list:
             expo = expo_dir[str(num_w)]
             coeff = coeff_dir[str(num_w)]
-            if expo == None or coeff == None:
+            if expo is None or coeff is None:
                 continue
             expo = float(expo)
             coeff = float(coeff)
-            min_f = (
-                BETA
-                * (error_E ** (-(1 + (1 / expo))))
-                * (1 / expo)
-                * (coeff ** (1 / expo))
-                * (expo + 1) ** (1 + (1 / expo))
-            )
+            min_f = _compute_min_f(error_E, expo, coeff)
 
             # グルーピングあり
-            unit_expo = cost_dir[str(num_w)]
+            unit_expo_val = cost_dir[str(num_w)]
+            if unit_expo_val is None:
+                continue
 
-            total_expo = unit_expo * min_f
-            # print(f'minf{min_f} cost{unit_expo} w{num_w}')
+            total_expo = unit_expo_val * min_f
+            # print(f'minf{min_f} cost{unit_expo_val} w{num_w}')
             total[str(num_w)] = total_expo
             if error_E == CA:
                 CA_exp[str(num_w)] = total_expo
@@ -935,15 +853,104 @@ def best_product_formula_all(mol, ham_name, n_w_list):
                 best_trotter = str(num_w)
         total_list.append(total)
         error_fac = math.log10(error_E / CA)
+        if best_trotter is None:
+            continue
         result[best_trotter].append(error_fac)
 
     return result, total_list, CA_exp
 
 
-def efficient_accuracy_range_plt_grouper(Hchain, n_w_list):
-    xdic = {}
-    dic = {str(n_w): {} for n_w in n_w_list}
+def num_gate_plot_grouping(
+    mol: str | int,
+    n_w_list: Sequence[PFLabel] | None = None,
+    *,
+    xlim: Tuple[float, float] | None = None,
+    ylim: Tuple[float, float] | None = None,
+    use_original: bool = False,
+) -> None:
+    """係数データから総パウリ回転数をプロットする（グルーピング版）。"""
+    # H-chain 表記を正規化
+    if isinstance(mol, str):
+        if not mol.startswith("H"):
+            raise ValueError(f"Unsupported mol label: {mol}")
+        mol_label = mol
+        mol_type = int(mol[1:])
+    else:
+        mol_type = int(mol)
+        mol_label = f"H{mol_type}"
 
+    # 対象 PF が未指定なら分解テーブルから拾う
+    if n_w_list is None:
+        n_w_list = tuple(DECOMPO_NUM.get(mol_label, {}).keys())
+    if not n_w_list:
+        raise ValueError(f"No PF labels available for {mol_label}")
+
+    # 係数データの保存名を組み立てる
+    _, _, ham_name, _ = jw_hamiltonian_maker(mol_type, 1.0)
+    ham_name = f"{ham_name}_grouping"
+
+    # 誤差スイープに対するコストを集計
+    CA_list = [CA * (10 ** (-0.01 * i)) for i in range(-200, 300)]
+    result_gr, total_list_gr, _ = best_product_formula_all(
+        mol_label, ham_name, n_w_list, use_original=use_original
+    )
+
+    # プロット
+    plt.figure(figsize=(8, 6), dpi=200)
+    for pf_key in n_w_list:
+        pf_key = str(pf_key)
+        x_vals = [err for err, d in zip(CA_list, total_list_gr) if pf_key in d]
+        y_vals = [d[pf_key] for d in total_list_gr if pf_key in d]
+        if not x_vals:
+            continue
+        label = label_replace(pf_key)
+        color = COLOR_MAP.get(pf_key, "gray")
+        plt.plot(x_vals, y_vals, label=label, color=color)
+
+    # 最適 PF の精度帯を色付け
+    for label, error_range in result_gr.items():
+        if not error_range:
+            continue
+        min_error_expo = min(error_range)
+        max_error_expo = max(error_range)
+        min_error = CA * (10 ** (min_error_expo))
+        max_error = CA * (10 ** (max_error_expo))
+        label_name = label_replace(label)
+        color = COLOR_MAP.get(label, "gray")
+        plt.axvspan(
+            min_error,
+            max_error,
+            color=color,
+            alpha=0.3,
+            label=f"{label_name}",
+        )
+
+    ax = plt.gca()
+    ax.axvline(x=CA, color="r", linestyle="--", label="CA")
+    set_loglog_axes(
+        ax,
+        xlabel="Target error [Hartree]",
+        ylabel="Number of Pauli rotations",
+    )
+    if xlim is not None:
+        ax.set_xlim(xlim)
+    if ylim is not None:
+        ax.set_ylim(ylim)
+    ax.tick_params(labelsize=15)
+    ax.legend(fontsize=12)
+    plt.show()
+
+
+def efficient_accuracy_range_plt_grouper(
+    Hchain: int,
+    n_w_list: Sequence[PFLabel],
+    use_original: bool = False,
+) -> None:
+    """H-chain ごとの最適 PF の精度帯を描画する（use_original=True で original を参照）。"""
+    xdic: Dict[str, int] = {}
+    dic: Dict[str, Dict[str, List[float]]] = {str(n_w): {} for n_w in n_w_list}
+
+    # H-chain ごとに最適 PF の精度範囲を集計
     for chain in range(2, Hchain + 1):
         mol = f"H{chain}"
         distance = 1.0
@@ -951,7 +958,9 @@ def efficient_accuracy_range_plt_grouper(Hchain, n_w_list):
         ham_name = ham_name + "_grouping"
 
         xdic.setdefault(mol, n_qubits)
-        result, _, _ = best_product_formula_all(mol, ham_name, n_w_list)
+        result, _, _ = best_product_formula_all(
+            mol, ham_name, n_w_list, use_original=use_original
+        )
 
         for label, error_range in result.items():
             if error_range:
@@ -971,13 +980,17 @@ def efficient_accuracy_range_plt_grouper(Hchain, n_w_list):
     xdic = {'H2':4, 'H4':8}
     """
 
-    def plot_with_horizontal_offset(data, xdic, offset=0.2):
+    def plot_with_horizontal_offset(
+        data: Dict[str, Dict[str, List[float]]],
+        xdic: Dict[str, int],
+        offset: float = 0.2,
+    ) -> None:
 
         plt.figure(figsize=(8, 6), dpi=200)
 
         # 凡例用のラベル管理
-        color_labels = set()
-        marker_labels = set()
+        color_labels: Set[str] = set()
+        marker_labels: Set[str] = set()
 
         marker_map = {
             "H2": "o",
@@ -996,15 +1009,15 @@ def efficient_accuracy_range_plt_grouper(Hchain, n_w_list):
             "H15": "X",
         }
 
-        x_offsets = {}  # 横軸のオフセット管理
+        x_offset_map: Dict[float, Dict[str, float]] = {}  # 横軸のオフセット管理
 
-        def get_unique_x(x_base, shape, label):
+        def get_unique_x(x_base: float, shape: str, _label: str) -> float:
             # key = (shape, label)  # shape と label の組み合わせでユニークなキーを生成
-            if x_base not in x_offsets:
-                x_offsets[x_base] = {}
-            if shape not in x_offsets[x_base]:
-                x_offsets[x_base][shape] = len(x_offsets[x_base]) * offset
-            return x_base + x_offsets[x_base][shape]
+            if x_base not in x_offset_map:
+                x_offset_map[x_base] = {}
+            if shape not in x_offset_map[x_base]:
+                x_offset_map[x_base][shape] = len(x_offset_map[x_base]) * offset
+            return x_base + x_offset_map[x_base][shape]
 
         for label, subsets in data.items():
             color = COLOR_MAP[label]  # グループ (w2, w4, w8) の色を取得
@@ -1033,15 +1046,15 @@ def efficient_accuracy_range_plt_grouper(Hchain, n_w_list):
         # グループ化された凡例の設定
         handles, labels = plt.gca().get_legend_handles_labels()
         color_handles = [h for h, l in zip(handles, labels) if l in data.keys()]
-        color_labels = [l for l in labels if l in data.keys()]
+        color_labels_list = [l for l in labels if l in data.keys()]
         marker_handles = [h for h, l in zip(handles, labels) if l in xdic.keys()]
-        marker_labels = [l for l in labels if l in xdic.keys()]
+        marker_labels_list = [l for l in labels if l in xdic.keys()]
 
         ca_handle = plt.axhline(y=CA, color="r", linestyle="--", label="CA")
 
         # 凡例にCAを追加
         combined_handles = color_handles + marker_handles + [ca_handle]
-        combined_labels_0 = color_labels + marker_labels + ["CA"]
+        combined_labels_0 = color_labels_list + marker_labels_list + ["CA"]
         combined_labels_1 = [s.replace("_gr", "") for s in combined_labels_0]
         combined_labels = [s.replace("my1", "4(new)") for s in combined_labels_1]
         combined_labels_2 = [label_replace(lb) for lb in combined_labels]

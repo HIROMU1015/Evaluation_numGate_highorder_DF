@@ -1,0 +1,9 @@
+from typing import Any
+
+spmatrix = Any
+
+def load_npz(*args: Any, **kwargs: Any) -> Any: ...
+
+def save_npz(*args: Any, **kwargs: Any) -> Any: ...
+
+def eye(*args: Any, **kwargs: Any) -> Any: ...

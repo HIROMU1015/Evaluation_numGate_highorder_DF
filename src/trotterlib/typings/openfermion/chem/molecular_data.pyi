@@ -1,0 +1,3 @@
+from typing import Any
+
+def spinorb_from_spatial(*args: Any, **kwargs: Any) -> Any: ...

@@ -2,39 +2,72 @@ from __future__ import annotations
 
 import os
 from multiprocessing import Pool
-from typing import Any, List, Optional, Tuple
+from typing import Any, List, Sequence, Tuple, Union
 
-import numpy as np  # type: ignore
-import scipy.sparse as sp  # type: ignore
-from openfermion.linalg import get_sparse_operator  # type: ignore
-from scipy.sparse import eye  # type: ignore
-from scipy.sparse.linalg import expm  # type: ignore
+import numpy as np
+import scipy.sparse as sp
+from openfermion.linalg import get_sparse_operator
+from scipy.sparse import eye
+from scipy.sparse.linalg import expm
 
-from chemistry_hamiltonian import ham_list_maker
-from product_formula import _get_w_list
-from config import POOL_PROCESSES
+from .chemistry_hamiltonian import ham_list_maker
+from .product_formula import _get_w_list
+from .config import MATRIX_DIR, PFLabel
+from .pf_decomposition import iter_pf_steps
 
 
-def load_matrix_files(n_qubits, t, ham_name, num_w):
+def _make_time_dirs(
+    matrix_root: os.PathLike[str] | str,
+    t: float,
+    terms_dir_name: str,
+) -> str:
+    """時刻ごとの保存ディレクトリを作成して返す。"""
+    t_rounded = round(t, 10)
+    time_dir = os.path.join(os.fspath(matrix_root), str(t_rounded))
+    os.makedirs(time_dir, exist_ok=True)
+    terms_dir = os.path.join(time_dir, terms_dir_name)
+    os.makedirs(terms_dir, exist_ok=True)
+    return terms_dir
+
+
+def load_matrix_files(
+    _n_qubits: int, t: float, ham_name: str, num_w: PFLabel | None
+) -> Tuple[str, List[str]]:
     """t に対応する疎行列ファイル群を読み込み順序で返す（挙動不変）。"""
+    # 保存ディレクトリを構築
     t = round(t, 10)
-    sub = (
-        f"{ham_name}_Operator_w{num_w}/{t}/{ham_name}_nostep_tOperator_w{num_w}"
-        if num_w is not None
-        else f"{ham_name}_Operator_normal/{t}/{ham_name}_nostep_tOperator"
-    )
-    directory_path = os.path.join(os.getcwd(), "matrix", sub)
+    if num_w is not None:
+        matrix_dir = (
+            MATRIX_DIR
+            / f"{ham_name}_Operator_w{num_w}"
+            / f"{t}"
+            / f"{ham_name}_nostep_tOperator_w{num_w}"
+        )
+    else:
+        matrix_dir = (
+            MATRIX_DIR
+            / f"{ham_name}_Operator_normal"
+            / f"{t}"
+            / f"{ham_name}_nostep_tOperator"
+        )
     # "matrix_*.npz" を数値インデックス順にソート
     matrix_files = [
-        name for name in os.listdir(directory_path) if name.startswith("matrix_")
+        name for name in os.listdir(matrix_dir) if name.startswith("matrix_")
     ]
     matrix_paths = sorted(
         matrix_files, key=lambda s: int(os.path.splitext(s)[0].split("_")[1])
     )
-    return directory_path, matrix_paths
+    return os.fspath(matrix_dir), matrix_paths
 
 
-def eU_strage(jw_hamiltonian, t, n_qubits, w, idx, folder_path):
+def eU_strage(
+    jw_hamiltonian: Any,
+    t: float,
+    n_qubits: int,
+    w: float,
+    idx: int,
+    folder_path: Union[str, os.PathLike[str]],
+) -> int:
     """
     ハミルトニアンの項を疎行列の指数関数行列に変換し指定のフォルダに保存
 
@@ -50,19 +83,28 @@ def eU_strage(jw_hamiltonian, t, n_qubits, w, idx, folder_path):
         idx: トロッター展開されたハミルトニアンの項のインデックス
     """
 
-    def eU_exchanger(jw_hamiltonian, t, n_qubits, w):
+    def eU_exchanger(
+        jw_hamiltonian: Any, t: float, n_qubits: int, w: float
+    ) -> sp.spmatrix:
         """各項の e^{i w t H_j} を構成（既存ロジックを保持）。"""
-        dim = 2**n_qubits
-        I = eye(dim, format="csc")
-
-        def ham_to_cIsU(jw_hamiltonian, coefficient, t, n_qubits, w):
+        # 各項の指数演算子を構築
+        def ham_to_cIsU(
+            jw_hamiltonian: Any,
+            coefficient: float,
+            t: float,
+            n_qubits: int,
+            w: float,
+        ) -> sp.spmatrix:
             # 係数で規格化した H を用い、cos・sin 展開で 1ステップ分の e^{iwtH} を構築
             for term in jw_hamiltonian:
                 term_mat = get_sparse_operator(term, n_qubits)
                 h_norm = term_mat / coefficient
                 c = np.cos(w * t * coefficient)
                 s = np.sin(w * t * coefficient)
-                exp_op = complex(c, 0) * I + complex(0, s) * h_norm
+                exp_op = (
+                    complex(c, 0) * eye(2**n_qubits, format="csc")
+                    + complex(0, s) * h_norm
+                )
             return exp_op
 
         for term, coefficient in jw_hamiltonian.terms.items():
@@ -72,88 +114,43 @@ def eU_strage(jw_hamiltonian, t, n_qubits, w, idx, folder_path):
                 eU = expm(1j * eye(2**n_qubits, format="csc") * coefficient * t * w)
         return eU
 
+    # 指数演算子を保存
     eU = eU_exchanger(jw_hamiltonian, t, n_qubits, w)
     sp.save_npz(os.path.join(folder_path, f"matrix_{idx}.npz"), eU)
     idx += 1
     return idx
 
-def S_2(ham_list, t, n_qubits, w, folder_path, idx):  # 左端
-    """
-    Returns:
-        idx: トロッター展開した項のインデックス
-    """
-    J = len(ham_list)
-    # 折り返しの直前まで
-    for i in range(J - 1):
-        idx = eU_strage(ham_list[i], t, n_qubits, w / 2, idx, folder_path)
-        print(f"idx {idx} ham {ham_list[i]}")
-    # 折り返し
-    idx = eU_strage(ham_list[J - 1], t, n_qubits, w, idx, folder_path)
-    # 終端まで
-    for k in reversed(range(0, J - 1)):
-        idx = eU_strage(ham_list[k], t, n_qubits, w / 2, idx, folder_path)
-    return idx
 
-
-def S_2_trotter_left(ham_list, t, n_qubits, Max_w, nMax_w, folder_path, idx):  # 左端
-    """
-    Returns:
-        idx: トロッター展開した項のインデックス
-    """
-    J = len(ham_list)
-    # 折り返しの直前まで
-    for i in range(J - 1):
-        idx = eU_strage(ham_list[i], t, n_qubits, Max_w / 2, idx, folder_path)
-    # 折り返し
-    idx = eU_strage(ham_list[J - 1], t, n_qubits, Max_w, idx, folder_path)
-    # 終端 - 1 個目まで
-    for k in reversed(range(1, J - 1)):
-        idx = eU_strage(ham_list[k], t, n_qubits, Max_w / 2, idx, folder_path)
-    # 終端
-    idx = eU_strage(ham_list[0], t, n_qubits, (Max_w + nMax_w) / 2, idx, folder_path)
-    return idx
-
-
-def S_2_trotter(ham_list, t, n_qubits, w_f, w_s, folder_path, idx):  # 左端、右端以外
-    """
-    Returns:
-        idx: トロッター展開した項のインデックス
-    """
-    J = len(ham_list)
-    # 折り返しの直前まで
-    for i in range(1, J - 1):
-        idx = eU_strage(ham_list[i], t, n_qubits, w_f / 2, idx, folder_path)
-    # 折り返し
-    idx = eU_strage(ham_list[J - 1], t, n_qubits, w_f, idx, folder_path)
-    # 終端 - 1 個目まで
-    for k in reversed(range(1, J - 1)):
-        idx = eU_strage(ham_list[k], t, n_qubits, w_f / 2, idx, folder_path)
-    # 終端
-    idx = eU_strage(ham_list[0], t, n_qubits, (w_f + w_s) / 2, idx, folder_path)
-    return idx
-
-
-def S_2_trotter_right(ham_list, t, n_qubits, w_i, folder_path, idx):  # 右端
-    """
-    Returns:
-        idx: トロッター展開した項のインデックス
-    """
-    J = len(ham_list)
-    # 折り返しの直前まで
-    for i in range(1, J - 1):
-        idx = eU_strage(ham_list[i], t, n_qubits, w_i / 2, idx, folder_path)
-    # 折り返し
-    idx = eU_strage(ham_list[J - 1], t, n_qubits, w_i, idx, folder_path)
-    # 終端 まで
-    for k in reversed(range(0, J - 1)):
-        idx = eU_strage(ham_list[k], t, n_qubits, w_i / 2, idx, folder_path)
+def _apply_pf_steps(
+    ham_list: Sequence[Any],
+    t: float,
+    n_qubits: int,
+    w_list: Sequence[float],
+    folder_path: Union[str, os.PathLike[str]],
+    idx: int,
+    *,
+    verbose: bool = False,
+) -> int:
+    """PF の手順に沿って指数演算子を生成・保存する。"""
+    # PF の順序に従って指数演算子を生成
+    for step_idx, (term_idx, weight) in enumerate(
+        iter_pf_steps(len(ham_list), w_list)
+    ):
+        idx = eU_strage(ham_list[term_idx], t, n_qubits, weight, idx, folder_path)
+        if verbose and step_idx < len(ham_list) - 1:
+            print(f"idx {idx} ham {ham_list[term_idx]}")
     return idx
 
 
 def folder_maker_multiprocessing_values(
-    t_values, jw_hamiltonian, n_qubits, ham_name, num_w
-):
+    t_values: Sequence[float],
+    jw_hamiltonian: Any,
+    n_qubits: int,
+    ham_name: str,
+    num_w: PFLabel | None,
+) -> None:
     """t ごとにフォルダと e^{iHt} 分解を並列生成。32 並列を固定（挙動不変）。"""
+    # t のリストを分割して並列処理
     workers = 32
     partition_size = (len(t_values) + workers - 1) // workers
     t_partitions = [
@@ -161,74 +158,66 @@ def folder_maker_multiprocessing_values(
     ]
 
     if num_w is not None:
-        task_args = [
-            (jw_hamiltonian, t, n_qubits, ham_name, num_w, i)
-            for i, t in enumerate(t_partitions)
+        # 高次 PF 用のフォルダ生成
+        task_args_weighted = [
+            (jw_hamiltonian, t, n_qubits, ham_name, num_w) for t in t_partitions
         ]
         with Pool(processes=workers) as pool:
-            pool.starmap(w_trotter_folder_maker_multi, task_args)
+            pool.starmap(w_trotter_folder_maker_multi, task_args_weighted)
     else:
-        task_args = [
-            (jw_hamiltonian, t, n_qubits, ham_name, i)
-            for i, t in enumerate(t_partitions)
-        ]
+        # 通常 PF 用のフォルダ生成
+        task_args_normal = [(jw_hamiltonian, t, n_qubits, ham_name) for t in t_partitions]
         with Pool(processes=workers) as pool:
-            pool.starmap(normal_trotter_folder_maker_multi, task_args)
+            pool.starmap(normal_trotter_folder_maker_multi, task_args_normal)
     print("done")
 
 
 def normal_trotter_folder_maker_multi(
-    jw_hamiltonian, t_list, n_qubits, ham_name, core_num
-):
+    jw_hamiltonian: Any,
+    t_list: Sequence[float],
+    n_qubits: int,
+    ham_name: str,
+) -> None:
     """num_w=None の通常版フォルダ生成。"""
-    base = os.path.join(os.getcwd(), "matrix", f"{ham_name}_Operator_normal")
-    os.makedirs(base, exist_ok=True)
+    # 時刻ごとの保存ディレクトリを用意
+    matrix_root = MATRIX_DIR / f"{ham_name}_Operator_normal"
+    os.makedirs(matrix_root, exist_ok=True)
     ham_list = ham_list_maker(jw_hamiltonian)
     for t in t_list:
-        mt = round(t, 10)
-        target_dir = os.path.join(base, str(mt))
-        os.makedirs(target_dir, exist_ok=True)
-        folder_path = os.path.join(target_dir, f"{ham_name}_nostep_tOperator")
-        os.makedirs(folder_path, exist_ok=True)
+        terms_dir = _make_time_dirs(
+            matrix_root, t, f"{ham_name}_nostep_tOperator"
+        )
+        # 各項の指数演算子を保存
         idx = 0
         for term in ham_list:
-            idx = eU_strage(term, t, n_qubits, 1, idx, folder_path)
+            idx = eU_strage(term, t, n_qubits, 1, idx, terms_dir)
 
 
 def w_trotter_folder_maker_multi(
-    jw_hamiltonian, t_list, n_qubits, ham_name, num_w, core_num
-):
+    jw_hamiltonian: Any,
+    t_list: Sequence[float],
+    n_qubits: int,
+    ham_name: str,
+    num_w: PFLabel,
+) -> None:
     """重み付き（高次）PF のフォルダ生成。"""
-    parent_dir = os.path.join(os.getcwd(), "matrix", f"{ham_name}_Operator_w{num_w}")
-    os.makedirs(parent_dir, exist_ok=True)
+    # 時刻ごとの保存ディレクトリを用意
+    matrix_root = MATRIX_DIR / f"{ham_name}_Operator_w{num_w}"
+    os.makedirs(matrix_root, exist_ok=True)
     ham_list = ham_list_maker(jw_hamiltonian)
     w_list = _get_w_list(num_w)
     m = len(w_list)
     for t in t_list:
-        mt = round(t, 10)
-        target_dir = os.path.join(parent_dir, str(mt))
-        os.makedirs(target_dir, exist_ok=True)
-        folder_path = os.path.join(target_dir, f"{ham_name}_nostep_tOperator_w{num_w}")
-        os.makedirs(folder_path, exist_ok=True)
+        terms_dir = _make_time_dirs(
+            matrix_root, t, f"{ham_name}_nostep_tOperator_w{num_w}"
+        )
+        # PF 分解に従って指数演算子を保存
         idx = 0
         if m == 1:
             print(f"m{m}")
-            idx = S_2(ham_list, t, n_qubits, w_list[0], folder_path, idx)
+            idx = _apply_pf_steps(
+                ham_list, t, n_qubits, w_list, terms_dir, idx, verbose=True
+            )
             print(f"idx{idx}")
             continue
-        # w_m
-        idx = S_2_trotter_left(
-            ham_list, t, n_qubits, w_list[m - 1], w_list[m - 2], folder_path, idx
-        )
-        # w_{m-1} ~ w_1
-        for i in reversed(range(1, m - 1)):
-            idx = S_2_trotter(
-                ham_list, t, n_qubits, w_list[i], w_list[i - 1], folder_path, idx
-            )
-        # w_0 ~ w_{m-1}
-        for i in range(0, m - 1):
-            idx = S_2_trotter(
-                ham_list, t, n_qubits, w_list[i], w_list[i + 1], folder_path, idx
-            )
-        # w_m
-        idx = S_2_trotter_right(ham_list, t, n_qubits, w_list[m - 1], folder_path, idx)
+        idx = _apply_pf_steps(ham_list, t, n_qubits, w_list, terms_dir, idx)

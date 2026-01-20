@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import os
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Iterable
+from typing import Dict, Iterable, TypeAlias
 
 
 # =========================
@@ -11,6 +12,7 @@ from typing import Dict, Iterable
 
 def _find_project_root(start: Path) -> Path:
     """pyproject.toml or .git を目印に上へ辿って project root を推定する。"""
+    # 上位ディレクトリを探索
     for p in [start, *start.parents]:
         if (p / "pyproject.toml").exists() or (p / ".git").exists():
             return p
@@ -30,23 +32,35 @@ ARTIFACTS_DIR = PROJECT_ROOT / "artifacts"
 # 生成物の “フォルダ名” は今の互換のため残す（既存コードが参照してても壊れない）
 PICKLE_DIR = "trotter_expo_coeff"          # :contentReference[oaicite:2]{index=2}
 PICKLE_DIR_GROUPED = "trotter_expo_coeff_gr"  # :contentReference[oaicite:3]{index=3}
+PICKLE_DIR_GROUPED_ORIGINAL = "trotter_expo_coeff_gr_original"
 
 # 実際に使う Path（ここを保存/読込の基準にする）
 PICKLE_DIR_PATH = ARTIFACTS_DIR / PICKLE_DIR
 PICKLE_DIR_GROUPED_PATH = ARTIFACTS_DIR / PICKLE_DIR_GROUPED
+PICKLE_DIR_GROUPED_ORIGINAL_PATH = ARTIFACTS_DIR / PICKLE_DIR_GROUPED_ORIGINAL
 
 # もし matrix/ calculation/ も同じ階層に寄せたいなら
 MATRIX_DIR = ARTIFACTS_DIR / "matrix"
 CALCULATION_DIR = ARTIFACTS_DIR / "calculation"
 
-def ensure_artifact_dirs() -> None:
+def ensure_artifact_dirs(*, include_pickle_dirs: bool = True) -> None:
     """必要な出力ディレクトリを作る。"""
-    for d in (ARTIFACTS_DIR, PICKLE_DIR_PATH, PICKLE_DIR_GROUPED_PATH, MATRIX_DIR, CALCULATION_DIR):
+    # 生成対象のディレクトリを列挙
+    dirs = [ARTIFACTS_DIR, MATRIX_DIR, CALCULATION_DIR]
+    if include_pickle_dirs:
+        dirs.extend([PICKLE_DIR_PATH, PICKLE_DIR_GROUPED_PATH])
+    # 必要なら作成
+    for d in dirs:
         d.mkdir(parents=True, exist_ok=True)
 
-def pickle_dir(gr: bool | None = None) -> Path:
-    """gr(None)=通常, gr(True/False)= grouped 側、という今の呼び出し癖に合わせた切替。"""
-    return PICKLE_DIR_PATH if gr is None else PICKLE_DIR_GROUPED_PATH
+def pickle_dir(gr: bool | None = None, *, use_original: bool = False) -> Path:
+    """係数データの保存/読込先を返す（grouped/original を切替可能）。"""
+    # gr=None は通常系、gr=True/False は grouped 系
+    if gr is None:
+        return PICKLE_DIR_PATH
+    if use_original:
+        return PICKLE_DIR_GROUPED_ORIGINAL_PATH
+    return PICKLE_DIR_GROUPED_PATH
 
 
 # =========================
@@ -64,34 +78,35 @@ BETA = 1.2                 # :contentReference[oaicite:7]{index=7}
 # 化学的精度
 CA = 1.59360010199040e-3   # :contentReference[oaicite:8]{index=8}
 
+# 外挿などで使う target error
+TARGET_ERROR = CA / 10
+
 
 # =========================
-# Plot style (as-is)
+# Plot style
 # =========================
 
-COLOR_MAP = {
-    "2nd": "g",
-    "4th(new_3)": "r",
-    "4th(new_1)": "lightcoral",
-    "4th(new_2)": "b",
-    "6th(new_4)": "darkgreen",
-    "4th": "c",
-    "8th(Morales)": "m",
-    "10th(Morales)": "greenyellow",
-    "8th(Yoshida)": "orange",
+@dataclass(frozen=True)
+class PlotStyle:
+    color: str
+    marker: str
+
+
+PLOT_STYLE: Dict[str, PlotStyle] = {
+    "2nd": PlotStyle(color="g", marker="o"),
+    "4th(new_3)": PlotStyle(color="r", marker="v"),
+    "4th(new_1)": PlotStyle(color="lightcoral", marker="x"),
+    "4th(new_2)": PlotStyle(color="b", marker="<"),
+    "6th(new_4)": PlotStyle(color="darkgreen", marker="*"),
+    "6th(new_3)": PlotStyle(color="seagreen", marker="s"),
+    "4th": PlotStyle(color="c", marker="^"),
+    "8th(Morales)": PlotStyle(color="m", marker="h"),
+    "10th(Morales)": PlotStyle(color="greenyellow", marker="H"),
+    "8th(Yoshida)": PlotStyle(color="orange", marker=">"),
 }  # :contentReference[oaicite:9]{index=9}
 
-MARKER_MAP = {
-    "2nd": "o",
-    "4th(new_3)": "v",
-    "4th(new_1)": "lightcoral",  # ※ここは marker じゃなく色が入ってるので要注意（後で直すと◎）
-    "4th(new_2)": "<",
-    "6th(new_4)": "darkgreen",   # ※同上
-    "4th": "^",
-    "8th(Morales)": "h",
-    "10th(Morales)": "H",
-    "8th(Yoshida)": ">",
-}  # :contentReference[oaicite:10]{index=10}
+COLOR_MAP = {key: style.color for key, style in PLOT_STYLE.items()}
+MARKER_MAP = {key: style.marker for key, style in PLOT_STYLE.items()}
 
 
 # =========================
@@ -110,6 +125,24 @@ P_DIR = {
     "10th(Morales)": 10,
     "8th(Yoshida)": 8,
 }  # :contentReference[oaicite:11]{index=11}
+
+PFLabel: TypeAlias = str
+
+
+def require_pf_label(num_w: PFLabel | None) -> PFLabel:
+    """PF ラベルを検証し、正しければ返す。"""
+    # None/未知ラベルは例外
+    if num_w is None:
+        raise KeyError(num_w)
+    if num_w not in P_DIR:
+        raise KeyError(num_w)
+    return num_w
+
+
+def pf_order(num_w: PFLabel | None) -> int:
+    """PF ラベルから次数を返す。"""
+    # P_DIR から次数を引く
+    return P_DIR[require_pf_label(num_w)]
 
 
 # =========================
@@ -181,6 +214,8 @@ PF_RZ_LAYER = {
 # =========================
 
 def _keys(*dicts: Dict) -> set:
+    """複数辞書のキー集合をまとめて返す。"""
+    # キーを集合で合成
     s: set = set()
     for d in dicts:
         s |= set(d.keys())
@@ -191,6 +226,7 @@ def validate_config() -> None:
     PF 名の表記ゆれ（例: "4(new_1)" vs "4th(new_1)"）みたいな事故を早期に検出する。
     必要に応じて assert を増やしてOK。
     """
+    # スタイル定義のキー整合性を確認
     # 例: P_DIR と style の整合
     missing_color = set(P_DIR) - set(COLOR_MAP)
     missing_marker = set(P_DIR) - set(MARKER_MAP)

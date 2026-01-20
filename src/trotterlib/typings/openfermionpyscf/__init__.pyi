@@ -1,0 +1,3 @@
+from typing import Any
+
+def run_pyscf(*args: Any, **kwargs: Any) -> Any: ...

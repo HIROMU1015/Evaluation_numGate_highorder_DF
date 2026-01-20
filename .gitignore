@@ -1,6 +1,10 @@
 __pycache__/
 .ipynb_checkpoints/
+.vscode
 .mypy_cache
-.venv/
-venv
-artifacts
+mypy.ini
+.venv-req
+venv/
+artifacts/calculation
+artifacts/matrix
+code_draft/

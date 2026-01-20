@@ -1,3 +1,22 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "trotterlib"
+version = "0.1.0"
+requires-python = ">=3.11"
+
+# 依存は当面 requirements.txt のまま運用するなら、ここは空でもOK
+# dependencies = ["numpy", "scipy", ...]
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+
 [tool.black]
 line-length = 88
 
@@ -15,6 +34,8 @@ module = [
   "openfermion.*",
   "openfermionpyscf.*",
   "qiskit_time_evolution.*",
+  "scipy",
+  "scipy.*",
 ]
 ignore_missing_imports = true
 

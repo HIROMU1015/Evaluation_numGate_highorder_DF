@@ -1,10 +1,12 @@
 from __future__ import annotations
 
-import numpy as np 
+from typing import Sequence
+
+import numpy as np
 import matplotlib.pyplot as plt
 
 
-def eval_Fejer_kernel(T, x):
+def eval_Fejer_kernel(T: int, x: np.ndarray) -> np.ndarray:
     """
     Generate the kernel of QPE
     """
@@ -17,7 +19,9 @@ def eval_Fejer_kernel(T, x):
     return ret / T
 
 
-def generate_QPE_distribution(spectrum, population, T):
+def generate_QPE_distribution(
+    spectrum: Sequence[float], population: Sequence[float], T: int
+) -> np.ndarray:
     """
     Generate the index distribution of QPE
     """
@@ -30,7 +34,7 @@ def generate_QPE_distribution(spectrum, population, T):
     return dist
 
 
-def draw_with_prob(measure, N):
+def draw_with_prob(measure: np.ndarray, N: int) -> np.ndarray:
     """
     Draw N indices independently from a given measure
     """
@@ -42,12 +46,14 @@ def draw_with_prob(measure, N):
     return index
 
 
-def estimate_phase(k, T):
+def estimate_phase(k: int, T: int) -> float:
     estimate = 2 * np.pi * k / (T) - np.pi
     return estimate
 
 
-def QPE(spectrum, population, T, N):
+def QPE(
+    spectrum: Sequence[float], population: Sequence[float], T: int, N: int
+) -> float:
     """
     QPE Main routine
     """
@@ -64,11 +70,13 @@ def QPE(spectrum, population, T, N):
 
 
 def beta_plt(
-    T_list_QPE=np.array([128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768]),
-    N_rep=10,  # 繰り返し回数
-    N_QPE=int(100),  # サンプリング数
-    spectrum_F=[-1.5],
-):
+    T_list_QPE: np.ndarray = np.array(
+        [128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768]
+    ),
+    N_rep: int = 10,  # 繰り返し回数
+    N_QPE: int = 100,  # サンプリング数
+    spectrum_F: Sequence[float] = [-1.5],
+) -> None:
     error_QPE = np.zeros(len(T_list_QPE), dtype="float")
     T_total_QPE = np.zeros(len(T_list_QPE), dtype="float")
 
@@ -122,10 +130,12 @@ def beta_plt(
 
 
 def beta_scaling(
-    T_list_QPE=np.array([128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768]),  # M
-    N_rep=10,  # 繰り返し回数
-    N_QPE=int(100),  # サンプリング数
-):
+    T_list_QPE: np.ndarray = np.array(
+        [128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768]
+    ),  # M
+    N_rep: int = 10,  # 繰り返し回数
+    N_QPE: int = 100,  # サンプリング数
+) -> None:
     # ---- 100 回の trial で beta_fix を求めて平均 ----
     N_trials = 100
     beta_fix_list = []

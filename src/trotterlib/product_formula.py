@@ -1,7 +1,11 @@
-from typing import Any, List
+from typing import List
+
+from .config import PFLabel
 
 
-def morales_8th_list():
+def morales_8th_list() -> List[float]:
+    """Morales 8次の係数列を返す。"""
+    # 係数リストを構築
     w_1to8 = [
         0.29137384767986663096528500968049,
         0.26020394234904150277316667709864,
@@ -19,7 +23,9 @@ def morales_8th_list():
 
 
 # Yoshida's 8th order product formula
-def yoshida_8th_list():
+def yoshida_8th_list() -> List[float]:
+    """Yoshida 8次の係数列を返す。"""
+    # 係数リストを構築
     w_1to7 = [
         -1.61582374150097,
         -2.44699182370524,
@@ -36,7 +42,9 @@ def yoshida_8th_list():
 
 
 # Mauro's 10th order product formula(m=15)
-def morales_10th_m15_list():
+def morales_10th_m15_list() -> List[float]:
+    """Morales 10次(m=15)の係数列を返す。"""
+    # 係数リストを構築
     w_1to15 = [
         0.14552859955499429739088135596618,
         -0.48773512068133537309419933740564,
@@ -63,7 +71,9 @@ def morales_10th_m15_list():
 
 
 # Mauro's 10th order product formula(m=16)
-def morales_10th_m16_list():
+def morales_10th_m16_list() -> List[float]:
+    """Morales 10次(m=16)の係数列を返す。"""
+    # 係数リストを構築
     w_1to16 = [
         -0.4945013179955571856347147977644,
         0.2904317222970121479878414292093,
@@ -89,31 +99,39 @@ def morales_10th_m16_list():
 
 
 # Yoshida's 4th order product formula
-def yoshida_4th_list():  # s3odr4
+def yoshida_4th_list() -> List[float]:  # s3odr4
+    """Yoshida 4次の係数列を返す。"""
+    # 係数リストを構築
     w = [-1 * (2 ** (1 / 3)) / (2 - 2 ** (1 / 3)), 1 / (2 - 2 ** (1 / 3))]
     return w
 
 
-def trotter_2nd_list():
-    w = [1]
+def trotter_2nd_list() -> List[float]:
+    """2次(Trotter)の係数列を返す。"""
+    # 係数リストを構築
+    w = [1.0]
     return w
 
 
-def new_4th_m3_list():
+def new_4th_m3_list() -> List[float]:
+    """新構築 4次(m=3)の係数列を返す。"""
+    # 係数リストを構築
     w1to3 = [0.40653666, 0.21638706, 0.14924614]
     w0_1to3 = [1 - 2 * sum(w1to3)]
     w = w0_1to3 + w1to3
     return w
 
 
-def new_4th_m2_list():
+def new_4th_m2_list() -> List[float]:
+    """新構築 4次(m=2)の係数列を返す。"""
+    # 係数リストを構築
     w1to2 = [0.42008729, 0.40899193]
     w0_1to3 = [1 - 2 * sum(w1to2)]
     w = w0_1to3 + w1to2
     return w
 
 
-def _get_w_list(num_w: Any) -> List[float]:
+def _get_w_list(num_w: PFLabel) -> List[float]:
     """積公式パラメータ w の系列を取得（分岐を関数化）。"""
     if num_w == "8th(Morales)":
         return morales_8th_list()
