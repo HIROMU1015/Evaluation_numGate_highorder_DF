@@ -8,3 +8,9 @@ mypy.ini
 artifacts/calculation
 artifacts/matrix
 code_draft/
+src/trotterlib.egg-info
+*.egg-info/
+build/
+dist/
+.venv/
+__pycache__/
