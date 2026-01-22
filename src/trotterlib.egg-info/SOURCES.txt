@@ -3,6 +3,7 @@ pyproject.toml
 src/trotterlib/Almost_optimal_grouping.py
 src/trotterlib/__init__.py
 src/trotterlib/analysis_utils.py
+src/trotterlib/ccsd.py
 src/trotterlib/chemistry_hamiltonian.py
 src/trotterlib/config.py
 src/trotterlib/cost_extrapolation.py
@@ -29,6 +30,7 @@ src/trotterlib/df_trotter/circuit.py
 src/trotterlib/df_trotter/decompose.py
 src/trotterlib/df_trotter/model.py
 src/trotterlib/df_trotter/ops.py
+src/trotterlib/df_trotter/two_body.py
 src/trotterlib/typings/Almost_optimal_grouping/__init__.pyi
 src/trotterlib/typings/matplotlib/__init__.pyi
 src/trotterlib/typings/matplotlib/patches.pyi
@@ -57,3 +59,6 @@ src/trotterlib/typings/scipy/sparse/linalg.pyi
 tests/test_decompose_physics.py
 tests/test_df_trotter_decompose.py
 tests/test_df_trotter_ops.py
+tests/test_df_trotter_two_body_ordering.py
+tests/test_global_phase.py
+tests/test_time_evolution_sign.py

@@ -23,6 +23,9 @@ from trotterlib.df_trotter.ops import (
     build_df_blocks,
     build_one_body_gaussian_block,
 )
+from trotterlib.df_trotter.two_body import (
+    two_body_tensor_from_df_model as _two_body_tensor_from_df_model,
+)
 from qiskit.quantum_info import Operator
 
 from trotterlib.df_trotter.circuit import build_df_trotter_circuit, simulate_statevector
@@ -64,15 +67,6 @@ def _df_two_body_matrix(model) -> np.ndarray:
     acc += _one_body_matrix(model.one_body_correction)
     acc += model.constant_correction * np.eye(dim, dtype=np.complex128)
     return acc
-
-
-def _two_body_tensor_from_df_model(model: DFModel) -> np.ndarray:
-    n = model.N
-    h2_chemist = np.zeros((n, n, n, n), dtype=np.complex128)
-    for lam, g_mat in zip(model.lambdas, model.G_list):
-        h2_chemist += lam * np.einsum("pq,rs->pqrs", g_mat, g_mat, optimize=True)
-    # Convert chemist ordering back to physicist ordering for InteractionOperator.
-    return np.transpose(h2_chemist, (0, 2, 3, 1))
 
 
 def _hamiltonian_matrix_from_df_model(
@@ -406,7 +400,8 @@ def _run_sanity_checks(
 
         # Check hermiticity impact on A^2 reconstruction (small systems only).
         if max_nonherm > 0.0 and model.N <= 8:
-            h_df_herm = 0.0
+            h_df_herm = constant * np.eye(2 ** model.N, dtype=np.complex128)
+            h_df_herm += _one_body_matrix(one_body_spin)
             for lam, g_mat in zip(model.lambdas, model.G_list):
                 g_herm = 0.5 * (g_mat + g_mat.conj().T)
                 A = _one_body_matrix(g_herm)
