@@ -35,7 +35,7 @@ from .matrix_pf_build import (
 )
 from .matrix_multiply import multi_parallel_sparse_matrix_multiply_recursive
 from .eig_error import error_cal_multi
-from .analysis_utils import loglog_average_coeff, loglog_fit, print_loglog_fit
+from .analysis_utils import LogLogFitResult, loglog_average_coeff, loglog_fit, print_loglog_fit
 from .plot_utils import set_loglog_axes
 
 
@@ -122,10 +122,11 @@ def _collect_perturbation_errors(
     final_state_list: Sequence[Tuple[Any, ...]],
     energy: float,
     state_vec: np.ndarray,
-) -> Tuple[List[float], List[float]]:
+) -> Tuple[List[float], List[float], List[int]]:
     """摂動論ベースの誤差と対応する時間列を集計する。"""
     error_list_perturb: List[float] = []
     times_out: List[float] = []
+    counts: list[int] = []
     for item in final_state_list:
         t = item[0]
         statevector = item[1]
@@ -137,7 +138,114 @@ def _collect_perturbation_errors(
         overlap = overlap.real / np.cos(energy * time)
         error_list_perturb.extend(np.abs(overlap.real))
         times_out.append(time)
-    return times_out, error_list_perturb
+        rotation_count = int(item[2]) if len(item) > 2 else 0
+        counts.append(rotation_count)
+    return times_out, error_list_perturb, counts
+
+
+def _prepare_grouped_qc_data(molecule_type: int):
+    jw_hamiltonian, _, ham_name, num_qubits = jw_hamiltonian_maker(molecule_type)
+    ham_terms = ham_list_maker(jw_hamiltonian)
+    constant_term = next(iter(ham_terms[0].terms.values())).real
+
+    if molecule_type in (2, 3):
+        energy, state_vec, _ = ham_ground_energy(jw_hamiltonian)
+        grouped_ops, _ = min_hamiltonian_grouper(jw_hamiltonian, ham_name)
+        commuting_cliques = [[op] for op in grouped_ops]
+    else:
+        commuting_cliques, num_qubits, energy, state_vec = make_fci_vector_from_pyscf_solver_grouper(
+            molecule_type
+        )
+
+    energy = energy - constant_term
+    ham_name = f"{ham_name}_grouping"
+    return commuting_cliques, num_qubits, energy, state_vec, ham_name
+
+
+def _qc_gr_error_series(
+    t_start: float,
+    t_end: float,
+    t_step: float,
+    molecule_type: int,
+    pf_label: PFLabel,
+    *,
+    prepped: tuple[list[Any], int, float, np.ndarray, str] | None = None,
+) -> tuple[list[float], list[float], list[int], str, float, LogLogFitResult]:
+    times = list(np.arange(t_start, t_end, t_step))
+    neg_times = [-1.0 * t for t in times]
+    if prepped is None:
+        commuting_cliques, num_qubits, energy, state_vec, ham_name = _prepare_grouped_qc_data(
+            molecule_type
+        )
+    else:
+        commuting_cliques, num_qubits, energy, state_vec, ham_name = prepped  # type: ignore[assignment]
+    task_args = [
+        (commuting_cliques, t, num_qubits, state_vec, pf_label) for t in neg_times
+    ]
+    with Pool(processes=POOL_PROCESSES) as pool:
+        final_state_list = pool.starmap(tEvolution_vector_grouper, task_args)
+
+    times_out, error_list_perturb, counts = _collect_perturbation_errors(
+        final_state_list,
+        energy,
+        state_vec,
+    )
+
+    avg_coeff = loglog_average_coeff(
+        times_out, error_list_perturb, pf_order(pf_label), mask_nonpositive=False
+    )
+    fit = loglog_fit(
+        times_out, error_list_perturb, mask_nonpositive=False, compute_r2=True
+    )
+    return times_out, error_list_perturb, counts, ham_name, avg_coeff, fit
+
+
+def trotter_error_qc_gr_curve(
+    t_start: float,
+    t_end: float,
+    t_step: float,
+    molecule_type: int,
+    pf_label: PFLabel,
+ ) -> tuple[list[float], list[float], list[int], str, float, LogLogFitResult]:
+    return _qc_gr_error_series(t_start, t_end, t_step, molecule_type, pf_label)
+
+
+def plot_trotter_error_curve(
+    times: Sequence[float],
+    errors: Sequence[float],
+    *,
+    title: str,
+    fit_result: LogLogFitResult | None = None,
+) -> None:
+    ax = plt.gca()
+    set_loglog_axes(
+        ax,
+        title=title,
+        xlabel="time",
+        ylabel="error",
+    )
+    ax.plot(times, errors, marker="s", linestyle="-")
+    if fit_result is not None:
+        alpha = fit_result.coeff
+        p = fit_result.slope
+        fit_curve = [alpha * (t**p) for t in times]
+        ax.plot(
+            times,
+            fit_curve,
+            linestyle="--",
+            label=f"fit: α={alpha:.2e}, p={p:.2f}",
+        )
+        ax.text(
+            0.05,
+            0.95,
+            f"error exponent: {p:.2f}\nerror coefficient: {alpha:.2e}",
+            transform=ax.transAxes,
+            va="top",
+            ha="left",
+            bbox=dict(facecolor="white", alpha=0.7, edgecolor="none"),
+        )
+    ax.legend()
+    plt.show()
 
 
 def trotter_error_plt_qc(
@@ -168,7 +276,7 @@ def trotter_error_plt_qc(
         final_state_list = pool.starmap(tEvolution_vector, task_args)
 
     # 摂動論ベースの誤差を集計
-    times_out, error_list_perturb = _collect_perturbation_errors(
+    times_out, error_list_perturb, _ = _collect_perturbation_errors(
         final_state_list,
         energy,
         state_vec,
@@ -261,51 +369,18 @@ def trotter_error_plt_qc_gr(
     times = list(np.arange(t_start, t_end, t_step))
     neg_times = [-1.0 * t for t in times]
 
-    # Hamiltonian の生成とグルーピング
-    jw_hamiltonian, _, ham_name, num_qubits = jw_hamiltonian_maker(molecule_type)
-    ham_terms = ham_list_maker(jw_hamiltonian)
-    # 定数項（アイデンティティ項）の実数部を取得
-    constant_term = next(iter(ham_terms[0].terms.values())).real
-
-    if molecule_type in (2, 3):
-        energy, state_vec, _ = ham_ground_energy(jw_hamiltonian)
-        grouped_ops, _ = min_hamiltonian_grouper(jw_hamiltonian, ham_name)
-        commuting_cliques = [[op] for op in grouped_ops]
-    else:
-        (
-            commuting_cliques,
-            num_qubits,
-            energy,
-            state_vec,
-        ) = make_fci_vector_from_pyscf_solver_grouper(molecule_type)
-
-    # 定数項を除いたエネルギーを使用
-    energy = energy - constant_term
+    commuting_cliques, num_qubits, energy, state_vec, ham_name = _prepare_grouped_qc_data(
+        molecule_type
+    )
     print(f"energy_{energy}")
-    ham_name = f"{ham_name}_grouping"
-
-    # グルーピング版の時間発展を並列に計算
-    task_args = [
-        (commuting_cliques, t, num_qubits, state_vec, pf_label) for t in neg_times
-    ]
-    with Pool(processes=POOL_PROCESSES) as pool:
-        final_state_list = pool.starmap(tEvolution_vector_grouper, task_args)
-
-    # 摂動論ベースの誤差を集計
-    times_out, error_list_perturb = _collect_perturbation_errors(
-        final_state_list,
-        energy,
-        state_vec,
+    times_out, error_list_perturb, _, ham_name, avg_coeff, fit = _qc_gr_error_series(
+        t_start,
+        t_end,
+        t_step,
+        molecule_type,
+        pf_label,
+        prepped=(commuting_cliques, num_qubits, energy, state_vec, ham_name),
     )
-
-    avg_coeff = loglog_average_coeff(
-        times_out, error_list_perturb, n_w, mask_nonpositive=False
-    )
-
-    fit = loglog_fit(
-        times_out, error_list_perturb, mask_nonpositive=False, compute_r2=True
-    )
-    # In Y = CX^a, logY = AlogX + B as 10^B = C
     print_loglog_fit(fit, ave_coeff=avg_coeff)
 
     # フィッティング結果の保存（必要時）
@@ -325,13 +400,9 @@ def trotter_error_plt_qc_gr(
         save_data(target_path, avg_coeff, True)
     
 
-    # プロット
-    ax = plt.gca()
-    set_loglog_axes(
-        ax,
+    plot_trotter_error_curve(
+        times_out,
+        error_list_perturb,
         title=f"{ham_name}_{series_label}",
-        xlabel="time",
-        ylabel="error",
+        fit_result=fit,
     )
-    ax.plot(times_out, error_list_perturb, marker="s", linestyle="-")
-    plt.show()

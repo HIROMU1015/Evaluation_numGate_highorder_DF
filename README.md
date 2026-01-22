@@ -37,10 +37,15 @@ pip install -r requirements.txt
 - `trotter_error_plt_qc(t_start, t_end, t_step, molecule_type, pf_label)`: 非グルーピングのQiskit時間発展で誤差を評価し、対角化結果とも比較プロットする。引数は `trotter_error_plt` と同じ。
 - `trotter_error_plt_qc_gr(t_start, t_end, t_step, molecule_type, pf_label, save_fit_params, save_avg_coeff)`: グルーピングありの誤差評価。`save_fit_params=True` でフィット結果（expo/coeff）を保存、`save_avg_coeff=True` で次数固定の平均係数を保存する。
 - `exp_extrapolation(Hchain, n_w_list, show_bands=True, band_height=0.06, band_alpha=0.28)`: 保存済みフィット係数からパウリ回転数を外挿し、H鎖サイズに対するスケーリングを比較する。`Hchain` は最大H鎖原子数、`n_w_list` は比較する積公式ラベル一覧。
+  - `scaling_data` / `decompo_counts` を渡すと `scripts.df_trotter_energy_plot_perturb.df_trotter_fixed_order_coeff` などの df_trotter スケーリング結果を min_f とパウリ回転数に使えます。
+  - `trotterlib.cost_extrapolation.total_pauli_rotations_from_scaling(mol_type, pf_label, ...)` を使えば単一の分子＋PFについて df_trotter の α（または artifacts）をもとに `total_expo` を返せます。
+  - `trotterlib.cost_extrapolation.df_trotter_total_rotations(...)` を使えば df_trotter の sweep → α → `total_expo` を一括で実行し、`exp_extrapolation` に渡す scaling_data やそのまま表示する `total_rotations` にくわえ、1 PF ステップ中の実測パウリ回転数（decompo_num）も返せます。`show_plot` を True にすればその場で log-log plot も表示します。
+  - `trotterlib.cost_extrapolation.trotter_qc_gr_total_rotations(...)` を使えば `trotter_error_plt_qc_gr` の摂動論誤差から α（avg coeff）と実際のグループ化回路のパウリ回転数を取得し、`total_expo` を直接求められます（必要なら `scaling_data` / `decompo_counts` で上書き）。
 - `exp_extrapolation_diff(Hchain, n_w_list=("4th(new_2)", "8th(Morales)"), MIN_POS=1e-18, X_MIN_CALC=4, X_MAX_DISPLAY=100)`: 2つの積公式の外挿曲線と差分を同一図（双Y軸）で表示する。`n_w_list` は2要素推奨。
 - `t_depth_extrapolation(Hchain, n_w_list, rz_layer=None, show_bands=True, band_height=0.06, band_alpha=0.28)`: QPE全体のT-depth（またはRZレイヤ数）を外挿する。`rz_layer=True` でRZレイヤ数を表示する。
 - `t_depth_extrapolation_diff(Hchain, rz_layer=None, n_w_list=("4th(new_2)", "8th(Morales)"), MIN_POS=1e-18, X_MIN_CALC=4, X_MAX_DISPLAY=100)`: 2つの積公式のT-depth（またはRZレイヤ数）と差分を比較する。
 - `efficient_accuracy_range_plt_grouper(Hchain, n_w_list)`: 各H鎖サイズで最適となる誤差範囲を評価し、積公式ごとの有効範囲を可視化する。
+- `scripts.df_trotter_energy_plot_perturb.df_trotter_fixed_order_coeff(times, errors, pf_label, ...)`: `α t^p` の形で誤差スケーリングを仮定し、pf_label（p）が決まっているときの α を返す。`exp_extrapolation` の `scaling_data` に渡す値を準備できます。
 
 ## 主要な設定
 `src/trotterlib/config.py` で出力先やプロセス数を調整できる。

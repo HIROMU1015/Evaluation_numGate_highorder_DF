@@ -11,6 +11,8 @@ src/trotterlib/io_cache.py
 src/trotterlib/matrix_multiply.py
 src/trotterlib/matrix_pf_build.py
 src/trotterlib/optimal_trotter.py
+src/trotterlib/pf_decomposition.py
+src/trotterlib/plot_utils.py
 src/trotterlib/plots_timeevo_error.py
 src/trotterlib/product_formula.py
 src/trotterlib/qiskit_time_evolution_grouping.py
@@ -22,6 +24,11 @@ src/trotterlib.egg-info/PKG-INFO
 src/trotterlib.egg-info/SOURCES.txt
 src/trotterlib.egg-info/dependency_links.txt
 src/trotterlib.egg-info/top_level.txt
+src/trotterlib/df_trotter/__init__.py
+src/trotterlib/df_trotter/circuit.py
+src/trotterlib/df_trotter/decompose.py
+src/trotterlib/df_trotter/model.py
+src/trotterlib/df_trotter/ops.py
 src/trotterlib/typings/Almost_optimal_grouping/__init__.pyi
 src/trotterlib/typings/matplotlib/__init__.pyi
 src/trotterlib/typings/matplotlib/patches.pyi
@@ -47,3 +54,6 @@ src/trotterlib/typings/qiskit/quantum_info/__init__.pyi
 src/trotterlib/typings/scipy/__init__.pyi
 src/trotterlib/typings/scipy/sparse/__init__.pyi
 src/trotterlib/typings/scipy/sparse/linalg.pyi
+tests/test_decompose_physics.py
+tests/test_df_trotter_decompose.py
+tests/test_df_trotter_ops.py

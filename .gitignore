@@ -4,7 +4,7 @@ __pycache__/
 .mypy_cache
 mypy.ini
 .venv-req
-venv/
+.venv/
 artifacts/calculation
 artifacts/matrix
 code_draft/

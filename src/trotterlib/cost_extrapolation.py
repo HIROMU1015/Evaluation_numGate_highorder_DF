@@ -2,7 +2,18 @@ from __future__ import annotations
 
 import math
 from collections import defaultdict
-from typing import Any, DefaultDict, Dict, List, Optional, Sequence, Set, Tuple
+from typing import (
+    Any,
+    DefaultDict,
+    Dict,
+    List,
+    Mapping,
+    Optional,
+    Sequence,
+    Set,
+    Tuple,
+    TypeAlias,
+)
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -24,8 +35,10 @@ from .config import (
 from .io_cache import load_data, label_replace
 from .chemistry_hamiltonian import jw_hamiltonian_maker
 from .product_formula import _get_w_list
-from .analysis_utils import loglog_fit
+from .analysis_utils import LogLogFitResult, loglog_fit
 from .plot_utils import set_loglog_axes, unique_legend_entries
+from .plots_timeevo_error import plot_trotter_error_curve, trotter_error_qc_gr_curve
+
 
 
 def calculation_cost(
@@ -224,6 +237,173 @@ def _apply_loglog_fit_with_bands(
     return fit_params
 
 
+NestedPFMapping: TypeAlias = Mapping[str, Mapping[PFLabel, float]]
+
+
+def _lookup_nested_value(
+    table: NestedPFMapping | None, mol_label: str, pf_label: PFLabel
+) -> float | None:
+    """Read a float from a nested {mol_label: {pf_label: value}} mapping."""
+
+    if table is None:
+        return None
+    pf_map = table.get(mol_label)
+    if pf_map is None:
+        return None
+    value = pf_map.get(pf_label)
+    if value is None:
+        return None
+    return float(value)
+
+
+def total_pauli_rotations_from_scaling(
+    mol_type: int,
+    pf_label: PFLabel,
+    *,
+    target_error: float = TARGET_ERROR,
+    scaling_data: NestedPFMapping | None = None,
+    decompo_counts: NestedPFMapping | None = None,
+    use_original: bool = False,
+) -> float:
+    """Return total Pauli-rotation cost for one PF label using streamed scaling data.
+
+    If `scaling_data`/`decompo_counts` are provided, they override the artifacts; otherwise
+    the helper falls back to loading the grouped coefficient and N_0 (DECOMPO_NUM).
+    """
+
+    mol_label = f"H{mol_type}"
+    coeff = _lookup_nested_value(scaling_data, mol_label, pf_label)
+    if coeff is None:
+        _, _, ham_name, _ = jw_hamiltonian_maker(mol_type, 1.0)
+        grouped = f"{ham_name}_grouping"
+        target_path = f"{grouped}_Operator_{pf_label}_ave"
+        coeff = float(load_data(target_path, use_original=use_original))
+
+    expo = P_DIR[pf_label]
+    min_f = _compute_min_f(target_error, expo, coeff)
+
+    unit_expo = _lookup_nested_value(decompo_counts, mol_label, pf_label)
+    if unit_expo is None:
+        unit_expo = DECOMPO_NUM[mol_label][pf_label]
+
+    return float(unit_expo) * min_f
+
+
+def df_trotter_total_rotations(
+    t_start: float,
+    t_end: float,
+    t_step: float,
+    *,
+    molecule_type: int,
+    pf_label: PFLabel,
+    target_error: float = TARGET_ERROR,
+    use_original: bool = False,
+    rank: int | None = None,
+    rank_fraction: float | None = None,
+    tol: float | None = None,
+    distance: float | None = None,
+    basis: str | None = None,
+    reference: str = "exact",
+    calibrate_phase: bool = True,
+    show_plot: bool = True,
+    fit: bool = True,
+) -> tuple[float, float, int, list[float], list[float]]:
+    """Run df_trotter energy sweep, optionally show its plot, and return cost info."""
+
+    from scripts.df_trotter_energy_plot_perturb import (
+        df_trotter_energy_error_curve_perturb,
+        df_trotter_fixed_order_coeff,
+        df_trotter_pauli_rotation_count,
+        plot_df_trotter_error_curve,
+    )
+
+    times, errors, setup = df_trotter_energy_error_curve_perturb(
+        t_start,
+        t_end,
+        t_step,
+        molecule_type=molecule_type,
+        pf_label=pf_label,
+        rank=rank,
+        rank_fraction=rank_fraction,
+        tol=tol,
+        distance=distance,
+        basis=basis,
+        reference=reference,
+        calibrate_phase=calibrate_phase,
+        return_setup=True,
+    )
+
+    alpha = df_trotter_fixed_order_coeff(times, errors, pf_label)
+    pauli_rotations = df_trotter_pauli_rotation_count(setup)
+    if show_plot:
+        plot_df_trotter_error_curve(
+            times,
+            errors,
+            molecule_type=molecule_type,
+            pf_label=pf_label,
+            fit=fit,
+        )
+    total_rotations = total_pauli_rotations_from_scaling(
+        mol_type=molecule_type,
+        pf_label=pf_label,
+        target_error=target_error,
+        scaling_data={f"H{molecule_type}": {pf_label: alpha}},
+        use_original=use_original,
+        decompo_counts={f"H{molecule_type}": {pf_label: pauli_rotations}},
+    )
+    print(f"total_rotations ({pf_label}, H{molecule_type}): {total_rotations:.3e}")
+    print(f"pauli rotations (DF circuit): {pauli_rotations}")
+    return total_rotations, alpha, pauli_rotations, times, errors
+
+
+def trotter_qc_gr_total_rotations(
+    t_start: float,
+    t_end: float,
+    t_step: float,
+    *,
+    molecule_type: int,
+    pf_label: PFLabel,
+    target_error: float = TARGET_ERROR,
+    use_original: bool = False,
+    scaling_data: NestedPFMapping | None = None,
+    decompo_counts: NestedPFMapping | None = None,
+    show_plot: bool = True,
+    fit: bool = True,
+) -> tuple[float, float, list[float], list[float], LogLogFitResult]:
+    """Compute total rotations from trotter_error_qc_gr perturbation scaling using avg coeff and measured Pauli rotations."""
+
+    times, errors, counts, ham_name, avg_coeff, fit_result = trotter_error_qc_gr_curve(
+        t_start, t_end, t_step, molecule_type, pf_label
+    )
+    if show_plot:
+        plot_trotter_error_curve(
+            times,
+            errors,
+            title=f"{ham_name}_{pf_label}",
+            fit_result=fit_result if fit else None,
+        )
+
+    alpha = avg_coeff
+    measured_pauli = int(round(np.mean(counts))) if counts else 0
+
+    scaling_data_to_use = scaling_data if scaling_data is not None else {f"H{molecule_type}": {pf_label: alpha}}
+    decompo_counts_to_use = decompo_counts if decompo_counts is not None else (
+        {f"H{molecule_type}": {pf_label: measured_pauli}} if measured_pauli > 0 else None
+    )
+    total_rotations = total_pauli_rotations_from_scaling(
+        mol_type=molecule_type,
+        pf_label=pf_label,
+        target_error=target_error,
+        scaling_data=scaling_data_to_use,
+        decompo_counts=decompo_counts_to_use,
+        use_original=use_original,
+    )
+    print(f"total_rotations ({pf_label}, H{molecule_type}) from QC-GR: {total_rotations:.3e}")
+    if measured_pauli > 0:
+        print(f"pauli rotations (QC-GR circuit): {measured_pauli}")
+    return total_rotations, alpha, measured_pauli, times, errors, fit_result
+
+
 def exp_extrapolation(
     Hchain: int,
     n_w_list: Sequence[PFLabel],
@@ -231,8 +411,14 @@ def exp_extrapolation(
     band_height: float = 0.06,
     band_alpha: float = 0.28,
     use_original: bool = False,
+    scaling_data: NestedPFMapping | None = None,
+    decompo_counts: NestedPFMapping | None = None,
 ) -> None:
-    """PF 別に総コストの外挿をプロットする（use_original=True で original を参照）。"""
+    """PF 別に総コストの外挿をプロットする（use_original=True で original を参照）。
+
+    scaling_data を与えると df_trotter などのスケーリング結果（α）を使って min_f を計算し、
+    decompo_counts を与えると 1 ステップあたりのパウリ回転数を上書きできます。
+    """
     Hchain_list, Hchain_str, num_qubits = _hchain_series(Hchain)
 
     target_error = TARGET_ERROR
@@ -253,17 +439,20 @@ def exp_extrapolation(
             if n_w == "10th(Morales)" and n_qubits == 30:  # 10th は H15 で未評価
                 continue
 
-            target_path = f"{ham_name}_Operator_{n_w}_ave"
-            data = load_data(target_path, use_original=use_original)
+            coeff = _lookup_nested_value(scaling_data, mol, n_w)
+            if coeff is None:
+                target_path = f"{ham_name}_Operator_{n_w}_ave"
+                data = load_data(target_path, use_original=use_original)
+                coeff = float(data)
 
-            coeff = data
             expo = P_DIR[n_w]
 
             min_f = _compute_min_f(target_error, expo, coeff)
 
-            # グルーピングあり
-            unit_expo = DECOMPO_NUM[mol][n_w]
-            total_expo = unit_expo * min_f
+            unit_expo = _lookup_nested_value(decompo_counts, mol, n_w)
+            if unit_expo is None:
+                unit_expo = DECOMPO_NUM[mol][n_w]
+            total_expo = float(unit_expo) * min_f
 
             total_dir[n_qubits][n_w] = total_expo
 
@@ -317,6 +506,8 @@ def exp_extrapolation_diff(
     X_MIN_CALC: float = 4,
     X_MAX_DISPLAY: float = 100,
     use_original: bool = False,
+    scaling_data: NestedPFMapping | None = None,
+    decompo_counts: NestedPFMapping | None = None,
 ) -> None:
     """
     単一図（左右Y軸）:
@@ -325,6 +516,9 @@ def exp_extrapolation_diff(
     依存：decompo_num, optimal_distance, jw_hamiltonian_maker, load_data, label_replace,
          MARKER_MAP, COLOR_MAP, P_DIR
     use_original=True で trotter_expo_coeff_gr_original を参照する。
+
+    scaling_data と decompo_counts によって artifacts のデータにアクセスせず
+    df_trotter などの現地結果 → α / パウリ回転数で min_f を構築できます。
     """
 
     # 対象 H チェーン
@@ -345,17 +539,20 @@ def exp_extrapolation_diff(
             if n_w == "10th(Morales)" and n_qubits == 30:  # 10th は H15 で未評価
                 continue
 
-            target_path = f"{ham_name}_Operator_{n_w}_ave"
-            data = load_data(target_path, use_original=use_original)
+            coeff = _lookup_nested_value(scaling_data, mol, n_w)
+            if coeff is None:
+                target_path = f"{ham_name}_Operator_{n_w}_ave"
+                data = load_data(target_path, use_original=use_original)
+                coeff = float(data)
 
-            coeff = data
             expo = P_DIR[n_w]
 
             min_f = _compute_min_f(target_error, expo, coeff)
 
-            # グルーピングあり
-            unit_expo = DECOMPO_NUM[mol][n_w]
-            total_expo = unit_expo * min_f
+            unit_expo = _lookup_nested_value(decompo_counts, mol, n_w)
+            if unit_expo is None:
+                unit_expo = DECOMPO_NUM[mol][n_w]
+            total_expo = float(unit_expo) * min_f
 
             total_dir[n_qubits][n_w] = total_expo
 
