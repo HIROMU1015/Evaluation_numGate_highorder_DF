@@ -197,7 +197,7 @@ def df_decompose_from_integrals(
     - 0.5 factor is applied before spin-orbital expansion, matching InteractionOperator.
     """
     one_body_integrals = np.asarray(one_body_integrals)
-    two_body_integrals = np.asarray(two_body_integrals)
+    two_body_integrals = _symmetrize_two_body_spatial(two_body_integrals)
     if one_body_integrals.ndim != 2 or one_body_integrals.shape[0] != one_body_integrals.shape[1]:
         raise ValueError("one_body_integrals must be a square matrix.")
     if two_body_integrals.ndim != 4:
@@ -222,3 +222,19 @@ def df_decompose_from_integrals(
         constant_correction=constant_correction,
         N=n_spin_orb,
     )
+
+
+def _symmetrize_two_body_spatial(two_body: np.ndarray) -> np.ndarray:
+    t = np.asarray(two_body, dtype=np.complex128)
+    parts = [
+        t,
+        np.transpose(t, (1, 0, 2, 3)),
+        np.transpose(t, (0, 1, 3, 2)),
+        np.transpose(t, (1, 0, 3, 2)),
+        np.transpose(t, (2, 3, 0, 1)),
+        np.transpose(t, (3, 2, 0, 1)),
+        np.transpose(t, (2, 3, 1, 0)),
+        np.transpose(t, (3, 2, 1, 0)),
+    ]
+    sym = sum(parts) / len(parts)
+    return np.real_if_close(sym, tol=1e-8)
