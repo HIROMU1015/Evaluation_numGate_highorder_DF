@@ -1,6 +1,6 @@
 from typing import List
 
-from .config import PFLabel
+from .config import PFLabel, normalize_pf_label
 
 
 def morales_8th_list() -> List[float]:
@@ -133,6 +133,7 @@ def new_4th_m2_list() -> List[float]:
 
 def _get_w_list(num_w: PFLabel) -> List[float]:
     """積公式パラメータ w の系列を取得（分岐を関数化）。"""
+    num_w = normalize_pf_label(num_w)
     if num_w == "8th(Morales)":
         return morales_8th_list()
     if num_w == "10th(Morales)":

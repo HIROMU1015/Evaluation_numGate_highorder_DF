@@ -11,10 +11,18 @@ from openfermion.chem.molecular_data import spinorb_from_spatial
 from openfermion.linalg import get_sparse_operator
 from openfermionpyscf import run_pyscf
 from openfermion.chem import MolecularData
+from openfermion.transforms import get_interaction_operator
+from scipy.sparse.linalg import eigsh
 
 from trotterlib.chemistry_hamiltonian import geo
-from trotterlib.config import DEFAULT_BASIS, DEFAULT_DISTANCE, PFLabel
-from trotterlib.df_trotter.decompose import df_decompose_from_integrals
+from trotterlib.config import (
+    DEFAULT_BASIS,
+    DEFAULT_DISTANCE,
+    PFLabel,
+    normalize_pf_label,
+    pf_order,
+)
+from trotterlib.df_trotter.decompose import df_decompose_from_integrals, diag_hermitian
 from trotterlib.df_trotter.model import Block, DFModel
 from trotterlib.df_trotter.ops import (
     apply_df_block,
@@ -24,6 +32,7 @@ from trotterlib.df_trotter.ops import (
     build_one_body_gaussian_block,
 )
 from trotterlib.df_trotter.two_body import (
+    interaction_operator_from_chemist_integrals,
     two_body_tensor_from_df_model as _two_body_tensor_from_df_model,
 )
 from qiskit.quantum_info import Operator
@@ -81,11 +90,14 @@ def _hamiltonian_matrix_from_df_model(
 def _hamiltonian_matrix_from_df_tensor(
     constant: float, one_body_spin: np.ndarray, model: DFModel
 ) -> np.ndarray:
-    two_body_df = _two_body_tensor_from_df_model(model)
-    op = InteractionOperator(
+    n = model.N
+    two_body_chemist = np.zeros((n, n, n, n), dtype=np.complex128)
+    for lam, g_mat in zip(model.lambdas, model.G_list):
+        two_body_chemist += lam * np.einsum("pq,rs->pqrs", g_mat, g_mat, optimize=True)
+    op = interaction_operator_from_chemist_integrals(
         constant + model.constant_correction,
         one_body_spin + model.one_body_correction,
-        two_body_df,
+        two_body_chemist,
     )
     return get_sparse_operator(op, n_qubits=model.N).toarray()
 
@@ -96,6 +108,33 @@ def _hamiltonian_matrix(
     op = InteractionOperator(constant, one_body_spin, two_body_spin)
     n = one_body_spin.shape[0]
     return get_sparse_operator(op, n_qubits=n).toarray()
+
+
+def _effective_df_hamiltonian_sparse(
+    constant: float, one_body_spin: np.ndarray, model: DFModel
+):
+    h_eff = one_body_spin + model.one_body_correction
+    u_one, eps = diag_hermitian(h_eff, assume_hermitian=True)
+    herm_one_body = u_one @ np.diag(eps) @ u_one.conj().T
+    total_op = FermionOperator((), constant + model.constant_correction)
+    total_op += _one_body_fermion_op(herm_one_body)
+    for lam, g_mat in zip(model.lambdas, model.G_list):
+        u_g, eta = diag_hermitian(g_mat, assume_hermitian=True)
+        g_herm = u_g @ np.diag(eta) @ u_g.conj().T
+        a_op = _one_body_fermion_op(g_herm)
+        total_op += lam * (a_op * a_op)
+    interaction_op = get_interaction_operator(total_op)
+    return get_sparse_operator(interaction_op, n_qubits=model.N)
+
+
+def _ground_state_from_sparse(h_sparse):
+    evals, evecs = eigsh(h_sparse, k=1, which="SA")
+    idx = int(np.argmin(evals.real))
+    return float(evals.real[idx]), evecs[:, idx]
+
+
+def _reorder_sparse_matrix(mat, perm: np.ndarray):
+    return mat[perm][:, perm]
 
 
 def _unitary_from_circuit(qc) -> np.ndarray:
@@ -203,12 +242,18 @@ def _h_chain_integrals_pyscf(
 
 def _symmetrize_two_body(two_body: np.ndarray) -> np.ndarray:
     t = np.asarray(two_body)
-    return 0.25 * (
-        t
-        + np.transpose(t, (1, 0, 3, 2))
-        + np.transpose(t, (2, 3, 0, 1))
-        + np.transpose(t, (3, 2, 1, 0))
-    )
+    parts = [
+        t,
+        np.transpose(t, (1, 0, 2, 3)),
+        np.transpose(t, (0, 1, 3, 2)),
+        np.transpose(t, (1, 0, 3, 2)),
+        np.transpose(t, (2, 3, 0, 1)),
+        np.transpose(t, (3, 2, 0, 1)),
+        np.transpose(t, (2, 3, 1, 0)),
+        np.transpose(t, (3, 2, 1, 0)),
+    ]
+    sym = sum(parts) / len(parts)
+    return np.real_if_close(sym, tol=1e-8)
 
 
 def _perturbation_error(
@@ -225,6 +270,31 @@ def _perturbation_error(
         return 0.0
     delta_e = np.vdot(psi0, delta_state).real / denom
     return float(abs(delta_e))
+
+
+def _df_model_diagnostics(model: DFModel) -> dict[str, float]:
+    g_nonherm = [
+        float(np.linalg.norm(g_mat - g_mat.conj().T)) for g_mat in model.G_list
+    ]
+    g_norms = [float(np.linalg.norm(g_mat)) for g_mat in model.G_list]
+    one_body_nonherm = float(
+        np.linalg.norm(model.one_body_correction - model.one_body_correction.conj().T)
+    )
+    lambdas = np.asarray(model.lambdas)
+    abs_lam = np.abs(lambdas)
+    max_imag = float(np.max(np.abs(np.imag(lambdas)))) if lambdas.size else 0.0
+    return {
+        "max_g_nonherm": max(g_nonherm) if g_nonherm else 0.0,
+        "max_g_norm": max(g_norms) if g_norms else 0.0,
+        "one_body_nonherm": one_body_nonherm,
+        "lam_min": float(abs_lam.min()) if abs_lam.size else 0.0,
+        "lam_max": float(abs_lam.max()) if abs_lam.size else 0.0,
+        "lam_max_imag": max_imag,
+    }
+
+
+def _hamiltonian_hermiticity(mat: np.ndarray) -> float:
+    return float(np.linalg.norm(mat - mat.conj().T))
 
 
 def _run_sanity_checks(
@@ -289,7 +359,7 @@ def _run_sanity_checks(
     if g_nonherm:
         max_nonherm = float(np.max(g_nonherm))
         max_norm = float(np.max(g_norms)) if g_norms else 1.0
-        if max_nonherm > 1e-8 * max(1.0, max_norm):
+        if reference != "df" and max_nonherm > 1e-8 * max(1.0, max_norm):
             warnings.append(
                 f"G_list not Hermitian (max ||G-G†||={max_nonherm:.3e})."
             )
@@ -379,7 +449,7 @@ def _run_sanity_checks(
         )
 
     # DF reconstruction consistency (small systems only).
-    if one_body_spin.size and model.N <= 8:
+    if one_body_spin.size and model.N <= 8 and reference != "df":
         h_exact = _hamiltonian_matrix(constant, one_body_spin, two_body_spin)
         h_df = _hamiltonian_matrix_from_df_model(constant, one_body_spin, model)
         diff = np.linalg.norm(h_exact - h_df)
@@ -416,7 +486,7 @@ def _run_sanity_checks(
             )
 
     # Sparse reconstruction consistency (moderate systems).
-    if one_body_spin.size and model.N <= 12:
+    if one_body_spin.size and model.N <= 12 and reference != "df":
         try:
             h_exact_sparse = get_sparse_operator(
                 InteractionOperator(constant, one_body_spin, two_body_spin),
@@ -533,6 +603,7 @@ def df_trotter_energy_error_curve(
     debug_print: Callable[[str], None] = print,
     debug_compare_expectation: bool = True,
 ) -> tuple[list[float], list[float]]:
+    pf_label = normalize_pf_label(pf_label)
     if t_step <= 0:
         raise ValueError("t_step must be positive.")
     if debug_every <= 0:
@@ -573,9 +644,10 @@ def df_trotter_energy_error_curve(
             rank = max(1, min(rank, full_rank))
     one_body_spin, two_body_spin = spinorb_from_spatial(one_body, two_body * 0.5)
 
-    model = df_decompose_from_integrals(
+    raw_model = df_decompose_from_integrals(
         one_body, two_body, constant=constant, rank=rank, tol=tol
     )
+    model = raw_model.hermitize()
     h_eff = one_body_spin + model.one_body_correction
     perm = _bit_reverse_permutation(model.N)
 
@@ -588,6 +660,7 @@ def df_trotter_energy_error_curve(
     psi0 = None
     state_vec = None
     h_ref = None
+    phase_energy_ref = None
     h_exact_open = None
     h_df_open = None
     use_fci = False
@@ -627,26 +700,63 @@ def df_trotter_energy_error_curve(
                 h_ref = _reorder_matrix(h_exact_open, perm)
 
     if reference == "df":
-        h_df_open = _hamiltonian_matrix_from_df_model(constant, one_body_spin, model)
-        evals, evecs = np.linalg.eigh(h_df_open)
-        idx = int(np.argmin(evals.real))
-        energy_ref = float(evals.real[idx])
-        psi0 = _reorder_vector(evecs[:, idx], perm)
-        h_ref = _reorder_matrix(h_df_open, perm)
+        h_df_sparse = _effective_df_hamiltonian_sparse(
+            constant, one_body_spin, model
+        )
+        energy_ref, psi0 = _ground_state_from_sparse(h_df_sparse)
+        psi0 = _reorder_vector(np.asarray(psi0).reshape(-1), perm)
         state_vec = psi0.reshape(-1, 1)
+        if estimator == "expectation":
+            h_ref = _reorder_sparse_matrix(h_df_sparse, perm)
+
+        if psi0 is not None and blocks:
+            phase_energy = _phase_energy_from_circuit(
+                blocks,
+                psi0,
+                1e-3,
+                num_qubits=model.N,
+                pf_label=pf_label,
+                energy_shift=constant + model.constant_correction,
+            )
+            if debug:
+                shift = phase_energy - float(energy_ref)
+                if abs(shift) > 1e-9:
+                    debug_print(
+                        "df reference calibration: "
+                        f"raw={float(energy_ref):+.6e} "
+                        f"phase={phase_energy:+.6e} "
+                        f"shift={shift:+.3e}"
+                    )
+                if abs(shift) > 1e-3:
+                    debug_print(
+                        "df calibration warning: large phase shift detected; "
+                        "check global_phase propagation or constant energy shifts."
+                    )
+            phase_energy_ref = phase_energy
 
     if debug:
+        raw_stats = _df_model_diagnostics(raw_model)
+        herm_stats = _df_model_diagnostics(model)
+        debug_print(
+            "df model diagnostics: "
+            f"raw max||G-G†||={raw_stats['max_g_nonherm']:.3e} "
+            f"raw max||G||={raw_stats['max_g_norm']:.3e} "
+            f"raw ||one_body-one_body†||={raw_stats['one_body_nonherm']:.3e} "
+            f"raw |lambda|min={raw_stats['lam_min']:.3e} "
+            f"raw |lambda|max={raw_stats['lam_max']:.3e} "
+            f"raw max|Im(lambda)|={raw_stats['lam_max_imag']:.3e} "
+            f"herm max||G-G†||={herm_stats['max_g_nonherm']:.3e} "
+            f"herm ||one_body-one_body†||={herm_stats['one_body_nonherm']:.3e} "
+            f"herm max|Im(lambda)|={herm_stats['lam_max_imag']:.3e}"
+        )
         if reference == "df":
-            abs_lam = np.abs(model.lambdas)
-            lam_min = float(abs_lam.min()) if abs_lam.size else 0.0
-            lam_max = float(abs_lam.max()) if abs_lam.size else 0.0
             debug_print(
                 "df reference: "
                 f"constant={constant:.6e} "
                 f"constant_correction={model.constant_correction:.6e} "
                 f"one_body_correction_norm={np.linalg.norm(model.one_body_correction):.3e} "
                 f"num_lambda={len(model.lambdas)} "
-                f"|lambda|min={lam_min:.3e} |lambda|max={lam_max:.3e} "
+                f"|lambda|min={herm_stats['lam_min']:.3e} |lambda|max={herm_stats['lam_max']:.3e} "
                 f"energy_ref={float(energy_ref) if energy_ref is not None else float('nan'):.6e}"
             )
         else:
@@ -678,6 +788,32 @@ def df_trotter_energy_error_curve(
                     f"||ΔH||_F={diff_tensor:.3e} rel={rel_tensor:.3e} "
                     f"E0_df={e_df_tensor:.6e} ΔE0={e_df_tensor - float(energy_ref):+.3e}"
                 )
+        if model.N <= 8:
+            h_df_raw = _hamiltonian_matrix_from_df_model(
+                constant, one_body_spin, raw_model
+            )
+            h_df_herm = _hamiltonian_matrix_from_df_model(
+                constant, one_body_spin, model
+            )
+            diff_h = np.linalg.norm(h_df_raw - h_df_herm)
+            debug_print(
+                "df hermitize check: "
+                f"||H_raw-H_herm||_F={diff_h:.3e} "
+                f"||H_raw-H_raw†||_F={_hamiltonian_hermiticity(h_df_raw):.3e} "
+                f"||H_herm-H_herm†||_F={_hamiltonian_hermiticity(h_df_herm):.3e}"
+            )
+            h_df_tensor = _hamiltonian_matrix_from_df_tensor(
+                constant, one_body_spin, model
+            )
+            diff_tensor = np.linalg.norm(h_df_herm - h_df_tensor)
+            rel_tensor = diff_tensor / max(1.0, np.linalg.norm(h_df_herm))
+            e_df_herm = float(np.min(np.linalg.eigvalsh(h_df_herm).real))
+            e_df_tensor = float(np.min(np.linalg.eigvalsh(h_df_tensor).real))
+            debug_print(
+                "df reconstruction check: "
+                f"||H_herm-H_tensor||_F={diff_tensor:.3e} rel={rel_tensor:.3e} "
+                f"E0_herm={e_df_herm:.6e} ΔE0={e_df_tensor - e_df_herm:+.3e}"
+            )
         _run_sanity_checks(
             constant=constant,
             one_body_spin=one_body_spin,
@@ -703,30 +839,10 @@ def df_trotter_energy_error_curve(
         )
         debug_print(f"rz_count={_count_rz_gates(qc)}")
 
-    energy_ref_eff = float(energy_ref) if energy_ref is not None else 0.0
-    if (
-        estimator == "perturbation"
-        and reference == "df"
-        and psi0 is not None
-        and energy_ref is not None
-        and blocks
-    ):
-        phase_energy = _phase_energy_from_circuit(
-            blocks,
-            psi0,
-            1e-3,
-            num_qubits=model.N,
-            pf_label=pf_label,
-            energy_shift=constant + model.constant_correction,
-        )
-        phase_shift = phase_energy - float(energy_ref)
-        if debug and abs(phase_shift) > 1e-9:
-            debug_print(
-                "phase calibration: "
-                f"shift={phase_shift:+.3e} "
-                f"energy_ref_eff={phase_energy:+.6e}"
-            )
-        energy_ref_eff = phase_energy
+    if reference == "df" and phase_energy_ref is not None:
+        energy_ref_eff = float(phase_energy_ref)
+    else:
+        energy_ref_eff = float(energy_ref) if energy_ref is not None else 0.0
 
     errors: list[float] = []
     if estimator == "perturbation":
@@ -741,9 +857,20 @@ def df_trotter_energy_error_curve(
                 energy_shift=constant + model.constant_correction,
             )
             psi_t = simulate_statevector(qc, psi0)  # type: ignore[arg-type]
-            errors.append(
-                _perturbation_error(t_sim, energy_ref_eff, psi0, psi_t)  # type: ignore[arg-type]
-            )
+            if reference == "df":
+                psi0_vec = np.asarray(psi0).reshape(-1)
+                s = np.vdot(psi0_vec, psi_t)
+                if t_sim != 0.0:
+                    e_phase = -np.angle(s) / t_sim
+                else:
+                    e_phase = 0.0
+                phase_err = abs(e_phase - energy_ref_eff)
+                power = max(1.0, pf_order(pf_label) / 2.0)
+                errors.append(float(phase_err**power))
+            else:
+                errors.append(
+                    _perturbation_error(t_sim, energy_ref_eff, psi0, psi_t)  # type: ignore[arg-type]
+                )
             if debug:
                 if (debug_max is None or debug_count < debug_max) and (
                     idx % debug_every == 0

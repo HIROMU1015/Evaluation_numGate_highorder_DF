@@ -268,7 +268,7 @@ def build_df_blocks(
 ) -> list[DFBlock]:
     blocks = []
     for lam, g_mat in zip(model.lambdas, model.G_list):
-        U, eta = diag_hermitian(g_mat, sort=sort)
+        U, eta = diag_hermitian(g_mat, sort=sort, assume_hermitian=True)
         u_ops = U_to_qiskit_ops_jw(U)
         blocks.append(DFBlock(U_ops=u_ops, eta=eta, lam=_as_real(lam, "lambda")))
     return blocks
@@ -277,6 +277,6 @@ def build_df_blocks(
 def build_one_body_gaussian_block(
     one_body: np.ndarray, *, sort: str = "descending_abs"
 ) -> OneBodyGaussianBlock:
-    U, eps = diag_hermitian(one_body, sort=sort)
+    U, eps = diag_hermitian(one_body, sort=sort, assume_hermitian=True)
     u_ops = U_to_qiskit_ops_jw(U)
     return OneBodyGaussianBlock(U_ops=u_ops, eps=eps)

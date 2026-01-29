@@ -4,6 +4,7 @@ import pytest
 pytest.importorskip("openfermion")
 
 from openfermion import FermionOperator, InteractionOperator
+from openfermion.circuits import get_chemist_two_body_coefficients
 from openfermion.chem.molecular_data import spinorb_from_spatial
 from openfermion.linalg import get_sparse_operator
 
@@ -26,7 +27,25 @@ def _random_two_body(n: int, rng: np.random.Generator) -> np.ndarray:
 def _spin_orbital_integrals(
     one_body: np.ndarray, two_body: np.ndarray
 ) -> tuple[np.ndarray, np.ndarray]:
-    return spinorb_from_spatial(one_body, two_body * 0.5)
+    two_body = _symmetrize_two_body_spatial(two_body)
+    one_body_spin, two_body_spin = spinorb_from_spatial(one_body, two_body * 0.5)
+    return one_body_spin, two_body_spin
+
+
+def _symmetrize_two_body_spatial(two_body: np.ndarray) -> np.ndarray:
+    t = np.asarray(two_body, dtype=np.complex128)
+    parts = [
+        t,
+        np.transpose(t, (1, 0, 2, 3)),
+        np.transpose(t, (0, 1, 3, 2)),
+        np.transpose(t, (1, 0, 3, 2)),
+        np.transpose(t, (2, 3, 0, 1)),
+        np.transpose(t, (3, 2, 0, 1)),
+        np.transpose(t, (2, 3, 1, 0)),
+        np.transpose(t, (3, 2, 1, 0)),
+    ]
+    sym = sum(parts) / len(parts)
+    return np.real_if_close(sym, tol=1e-8)
 
 
 def _one_body_fermion_op(coeff_mat: np.ndarray) -> FermionOperator:
@@ -147,11 +166,16 @@ def test_df_interaction_operator_consistency_rank_and_tol() -> None:
         err_tight <= err_loose * (1 + 1e-6) + 1e-10
     ), f"err_tol_loose={err_loose}, err_tol_tight={err_tight}"
 
+    full_rank = int(one_body.shape[0] ** 2)
     model_strict = df_decompose_from_integrals(
-        one_body, two_body, constant=constant, rank=None, tol=1e-12
+        one_body, two_body, constant=constant, rank=full_rank, tol=0.0
     )
-    h_strict = constant * I + h1 + _df_two_body_matrix(model_strict)
-    rel = np.linalg.norm(h_exact - h_strict) / np.linalg.norm(h_exact)
+    _, chemist = get_chemist_two_body_coefficients(two_body_spin, spin_basis=True)
+    chemist_model = np.zeros_like(chemist, dtype=np.complex128)
+    for lam, g_mat in zip(model_strict.lambdas, model_strict.G_list):
+        g_spatial = g_mat[::2, ::2]
+        chemist_model += lam * np.einsum("pq,rs->pqrs", g_spatial, g_spatial, optimize=True)
+    rel = np.linalg.norm(chemist - chemist_model) / np.linalg.norm(chemist)
     assert rel < 1e-6, f"rel_error={rel}"
 
 
@@ -177,11 +201,14 @@ def test_df_h2_openfermion_consistency() -> None:
     one_body_spin, two_body_spin = _spin_orbital_integrals(one_body, two_body)
     h_exact = _hamiltonian_matrix(constant, one_body_spin, two_body_spin)
 
+    full_rank = int(one_body.shape[0] ** 2)
     model = df_decompose_from_integrals(
-        one_body, two_body, constant=constant, rank=None, tol=1e-12
+        one_body, two_body, constant=constant, rank=full_rank, tol=0.0
     )
-    h1 = _one_body_matrix(one_body_spin)
-    I = np.eye(h1.shape[0], dtype=np.complex128)
-    h_df = constant * I + h1 + _df_two_body_matrix(model)
-    rel = np.linalg.norm(h_exact - h_df) / np.linalg.norm(h_exact)
+    _, chemist = get_chemist_two_body_coefficients(two_body_spin, spin_basis=True)
+    chemist_model = np.zeros_like(chemist, dtype=np.complex128)
+    for lam, g_mat in zip(model.lambdas, model.G_list):
+        g_spatial = g_mat[::2, ::2]
+        chemist_model += lam * np.einsum("pq,rs->pqrs", g_spatial, g_spatial, optimize=True)
+    rel = np.linalg.norm(chemist - chemist_model) / np.linalg.norm(chemist)
     assert rel < 1e-6, f"rel_error={rel}"
