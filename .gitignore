@@ -14,3 +14,4 @@ build/
 dist/
 .venv/
 __pycache__/
+DF実装仕様書.md
