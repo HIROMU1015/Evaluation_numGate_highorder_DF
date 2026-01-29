@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any, Sequence, Tuple
+import warnings
 
 import numpy as np
 from qiskit import QuantumCircuit
@@ -14,6 +15,32 @@ class DFModel:
     one_body_correction: np.ndarray
     constant_correction: float
     N: int
+
+    def hermitize(
+        self,
+        *,
+        tol: float = 1e-10,
+        strict: bool = False,
+    ) -> "DFModel":
+        """Return a Hermitianized copy of the DF model."""
+        g_list = [0.5 * (g_mat + g_mat.conj().T) for g_mat in self.G_list]
+        one_body = 0.5 * (self.one_body_correction + self.one_body_correction.conj().T)
+        lambdas = np.real_if_close(self.lambdas, tol=tol)
+        if np.iscomplexobj(lambdas):
+            max_imag = float(np.max(np.abs(np.imag(lambdas)))) if lambdas.size else 0.0
+            if max_imag > tol:
+                msg = f"DFModel lambdas have non-negligible imaginary parts (max={max_imag:.3e})."
+                if strict:
+                    raise ValueError(msg)
+                warnings.warn(msg, RuntimeWarning, stacklevel=2)
+        lambdas = np.real_if_close(lambdas, tol=tol).astype(np.complex128)
+        return DFModel(
+            lambdas=np.asarray(lambdas),
+            G_list=g_list,
+            one_body_correction=one_body,
+            constant_correction=self.constant_correction,
+            N=self.N,
+        )
 
 
 @dataclass(frozen=True)

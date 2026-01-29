@@ -129,14 +129,45 @@ P_DIR = {
 PFLabel: TypeAlias = str
 
 
-def require_pf_label(num_w: PFLabel | None) -> PFLabel:
-    """PF ラベルを検証し、正しければ返す。"""
-    # None/未知ラベルは例外
+_PF_LABEL_ALIASES = {
+    "2nd": "2nd",
+    "second": "2nd",
+    "4th": "4th",
+    "fourth": "4th",
+    "4th(new_2)": "4th(new_2)",
+    "4th(new_3)": "4th(new_3)",
+    "8th": "8th(Morales)",
+    "8th(morales)": "8th(Morales)",
+    "8th_morales": "8th(Morales)",
+    "8th-morales": "8th(Morales)",
+    "8th (morales)": "8th(Morales)",
+    "8th(yoshida)": "8th(Yoshida)",
+    "8th_yoshida": "8th(Yoshida)",
+    "8th-yoshida": "8th(Yoshida)",
+    "8th (yoshida)": "8th(Yoshida)",
+    "10th": "10th(Morales)",
+    "10th(morales)": "10th(Morales)",
+    "10th_morales": "10th(Morales)",
+    "10th-morales": "10th(Morales)",
+    "10th (morales)": "10th(Morales)",
+}
+
+
+def normalize_pf_label(num_w: PFLabel | None) -> PFLabel:
+    """PF ラベル表記揺れを正規化し、正しければ返す。"""
     if num_w is None:
         raise KeyError(num_w)
-    if num_w not in P_DIR:
+    canonical = _PF_LABEL_ALIASES.get(str(num_w).strip().lower())
+    if canonical is None:
+        canonical = str(num_w)
+    if canonical not in P_DIR:
         raise KeyError(num_w)
-    return num_w
+    return canonical
+
+
+def require_pf_label(num_w: PFLabel | None) -> PFLabel:
+    """PF ラベルを検証し、正しければ正規化して返す。"""
+    return normalize_pf_label(num_w)
 
 
 def pf_order(num_w: PFLabel | None) -> int:

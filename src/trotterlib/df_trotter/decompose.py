@@ -11,11 +11,11 @@ from .model import DFModel
 
 
 def diag_hermitian(
-    mat: np.ndarray, *, sort: str = "descending_abs"
+    mat: np.ndarray, *, sort: str = "descending_abs", assume_hermitian: bool = False
 ) -> Tuple[np.ndarray, np.ndarray]:
     """Diagonalize a Hermitian matrix and return (U, evals)."""
     mat = np.asarray(mat)
-    herm = 0.5 * (mat + mat.conj().T)
+    herm = mat if assume_hermitian else 0.5 * (mat + mat.conj().T)
     evals, U = np.linalg.eigh(herm)
     if sort == "descending_abs":
         order = np.argsort(np.abs(evals))[::-1]
