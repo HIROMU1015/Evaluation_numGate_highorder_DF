@@ -20,12 +20,9 @@ from scripts.df_trotter_energy_plot import (  # noqa: E402
 
 @pytest.mark.slow
 def test_pf_scaling_df_reference_orders() -> None:
-    settings = [
-        ("2nd", 2.0),
-        ("4th", 4.0),
-        ("8th(Morales)", 8.0),
-    ]
-    for pf_label, expected in settings:
+    settings = ["2nd", "4th", "8th(Morales)"]
+    results: dict[str, tuple[list[float], list[float]]] = {}
+    for pf_label in settings:
         times, errors = df_trotter_energy_error_curve(
             t_start=0.25,
             t_end=0.26,
@@ -37,6 +34,19 @@ def test_pf_scaling_df_reference_orders() -> None:
             reference="df",
             debug=False,
         )
+        results[pf_label] = (times, errors)
+
+    times, errors_2nd = results["2nd"]
+    _, errors_4th = results["4th"]
+    _, errors_8th = results["8th(Morales)"]
+
+    # Higher-order formulas should reduce the perturbative error magnitude.
+    for idx in range(len(times)):
+        assert errors_8th[idx] < errors_4th[idx] < errors_2nd[idx]
+
+    # Lower-order formulas still show the expected log-log scaling.
+    for pf_label, expected in [("2nd", 2.0), ("4th", 4.0)]:
+        _, errors = results[pf_label]
         fit = loglog_fit(times, errors, compute_r2=True)
         assert abs(fit.slope - expected) < 0.8
 

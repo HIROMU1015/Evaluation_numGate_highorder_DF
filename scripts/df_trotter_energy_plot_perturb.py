@@ -127,6 +127,7 @@ def df_ground_energy_from_df(
     model = df_decompose_from_integrals(
         one_body, two_body, constant=constant, rank=rank, tol=tol
     )
+    model = _hermitize_df_model(model)
     h_df_open = _hamiltonian_matrix_from_df_model(constant, one_body_spin, model)
     evals = np.linalg.eigvalsh(h_df_open)
     return float(np.min(evals.real))
@@ -189,6 +190,21 @@ def _df_two_body_matrix(model: DFModel) -> np.ndarray:
     acc += _one_body_matrix(model.one_body_correction)
     acc += model.constant_correction * np.eye(dim, dtype=np.complex128)
     return acc
+
+
+def _hermitize_df_model(model: DFModel) -> DFModel:
+    g_list = [0.5 * (g + g.conj().T) for g in model.G_list]
+    one_body = 0.5 * (
+        model.one_body_correction + model.one_body_correction.conj().T
+    )
+    const = float(np.real_if_close(model.constant_correction))
+    return DFModel(
+        lambdas=model.lambdas,
+        G_list=g_list,
+        one_body_correction=one_body,
+        constant_correction=const,
+        N=model.N,
+    )
 
 
 def _hamiltonian_matrix_from_df_model(
@@ -259,15 +275,15 @@ def _perturbation_error(
 ) -> float:
     if time == 0.0:
         return 0.0
+    psi0_vec = np.asarray(psi0).reshape(-1, 1)
+    psi_t_vec = np.asarray(psi_t).reshape(-1, 1)
     phase_factor = np.exp(-1j * energy * time)
-    delta_state = psi_t - phase_factor * psi0
-    denom = time * np.sin(energy * time)
+    delta_state = (psi_t_vec - phase_factor * psi0_vec) / (1j * time)
+    overlap = (psi0_vec.conj().T @ delta_state).item()
+    denom = np.cos(energy * time)
     if abs(denom) < 1e-12:
-        denom = energy * (time**2)
-    if denom == 0.0:
-        return 0.0
-    delta_e = np.vdot(psi0, delta_state).real / denom
-    return float(abs(delta_e))
+        denom = 1.0
+    return float(abs(overlap.real / denom))
 
 
 def df_trotter_energy_error_curve_perturb(
@@ -320,6 +336,8 @@ def df_trotter_energy_error_curve_perturb(
     model = df_decompose_from_integrals(
         one_body, two_body, constant=constant, rank=rank, tol=tol
     )
+    if reference == "df":
+        model = _hermitize_df_model(model)
     perm = _bit_reverse_permutation(model.N)
     h_eff = one_body_spin + model.one_body_correction
 

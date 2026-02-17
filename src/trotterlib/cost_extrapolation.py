@@ -30,6 +30,7 @@ from .config import (
     P_DIR,
     DECOMPO_NUM,
     PF_RZ_LAYER,
+    PICKLE_DIR_DF_PATH,
 )
 
 from .io_cache import load_data, label_replace
@@ -748,6 +749,165 @@ def t_depth_extrapolation(
         ax.set_ylabel("T-depth", fontsize=15)
     ax.grid(True, which='minor', axis='y', linestyle=':', linewidth=0.5, alpha=0.35)
     ax.grid(True, which='major', axis='y', linestyle='-', linewidth=0.8, alpha=0.6)
+    plt.show()
+
+
+def _load_df_artifact_payload(ham_name: str, pf_label: PFLabel) -> Dict[str, Any]:
+    """DF 外挿用の保存バイナリを読み込む。"""
+    path = PICKLE_DIR_DF_PATH / f"{ham_name}_Operator_{pf_label}"
+    data = load_data(str(path), gr=None)
+    if not isinstance(data, dict):
+        raise ValueError(f"Invalid DF artifact payload: {path}")
+    return data
+
+
+def _pick_df_rz_layer_value(
+    rz_layers: Mapping[str, Any],
+    preferred_key: str | None = None,
+) -> Tuple[str, float]:
+    """DF artifact の rz_layers から利用するレイヤー値を選ぶ。"""
+    candidate_keys: List[str] = []
+    if preferred_key:
+        candidate_keys.append(str(preferred_key))
+    candidate_keys.extend(
+        [
+            "total_nonclifford_z_coloring_depth",
+            "total_nonclifford_z_depth",
+            "total_nonclifford_rz_depth",
+            "ref_rz_depth",
+        ]
+    )
+    for key in candidate_keys:
+        if key not in rz_layers:
+            continue
+        try:
+            value = float(rz_layers[key])
+        except (TypeError, ValueError):
+            continue
+        if value > 0:
+            return key, value
+    raise ValueError(
+        "No positive rz layer metric found in DF artifact. "
+        f"available keys={list(rz_layers.keys())}"
+    )
+
+
+def t_depth_extrapolation_df(
+    Hchain: int,
+    n_w_list: Sequence[PFLabel],
+    rz_layer: Optional[bool] = None,
+    show_bands: bool = True,
+    band_height: float = 0.06,
+    band_alpha: float = 0.28,
+    rz_layer_key: str | None = None,
+) -> None:
+    """DF の保存データ(trotter_expo_coeff_df)を使って T-depth / RZ レイヤー数を外挿する。"""
+    if Hchain < 3:
+        raise ValueError("Hchain must be >= 3 for t_depth_extrapolation_df.")
+
+    target_error = TARGET_ERROR
+    total_dir: Dict[int, Dict[str, float]] = {}
+
+    chain_list = [i for i in range(3, Hchain + 1)]
+    Hchain_str = [f"H{i}" for i in chain_list]
+    num_qubits = [2 * i for i in chain_list]
+    plt.figure(figsize=(8, 6), dpi=200)
+
+    for qubits, mol in zip(num_qubits, Hchain_str):
+        if qubits % 4 == 0:
+            ham_name = mol + "_sto-3g_singlet_distance_100_charge_0_grouping"
+        else:
+            ham_name = mol + "_sto-3g_triplet_1+_distance_100_charge_1_grouping"
+
+        total_dir[qubits] = {}
+
+        for n_w in n_w_list:
+            if n_w == "10th(Morales)" and qubits == 30:
+                continue
+
+            payload = _load_df_artifact_payload(ham_name, n_w)
+            if "expo" not in payload or "coeff" not in payload:
+                raise ValueError(
+                    f"DF artifact missing expo/coeff: {ham_name}_Operator_{n_w}"
+                )
+            try:
+                expo = float(payload["expo"])
+                coeff = float(payload["coeff"])
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    f"Invalid expo/coeff in DF artifact: {ham_name}_Operator_{n_w}"
+                ) from exc
+            if expo <= 0 or coeff <= 0:
+                raise ValueError(
+                    f"Non-positive expo/coeff in DF artifact: {ham_name}_Operator_{n_w}"
+                )
+
+            rz_layers_raw = payload.get("rz_layers")
+            if not isinstance(rz_layers_raw, Mapping):
+                raise ValueError(
+                    f"DF artifact missing rz_layers: {ham_name}_Operator_{n_w}"
+                )
+            _metric_key, rz_layer_value = _pick_df_rz_layer_value(
+                rz_layers_raw, preferred_key=rz_layer_key
+            )
+
+            # DF版では DECOMPO_NUM の代わりに保存済み rz layer を使う。
+            N_0 = rz_layer_value
+            pf_layer_rz = rz_layer_value
+
+            t = (target_error / coeff * (expo + 1)) ** (1 / expo)
+            eps_qpe = target_error * (expo / (expo + 1))
+            M_qpe = BETA / (eps_qpe * t)
+
+            eps_rot = (t * 0.01 * target_error) / (N_0 * M_qpe)
+            T_rot = 3 * np.log2(1 / eps_rot)
+            D_T = pf_layer_rz * T_rot
+            tot_dt = M_qpe * D_T
+            tot_rz_layer = M_qpe * pf_layer_rz
+
+            if rz_layer:
+                total_dir[qubits][n_w] = tot_rz_layer
+            else:
+                total_dir[qubits][n_w] = tot_dt
+
+    series: DefaultDict[str, Dict[str, List[float]]] = defaultdict(
+        lambda: {"x": [], "y": []}
+    )
+    for qubit, gate_dir in total_dir.items():
+        for pf, gate in gate_dir.items():
+            lb = label_replace(pf)
+            plt.plot(
+                qubit,
+                gate,
+                ls="None",
+                marker=MARKER_MAP[pf],
+                color=COLOR_MAP[pf],
+                label=lb if qubit == num_qubits[0] else None,
+            )
+            series[pf]["x"].append(float(qubit))
+            series[pf]["y"].append(float(gate))
+
+    ax = plt.gca()
+    set_loglog_axes(ax)
+    XMAX = 100
+    xmin_current, xmax_current = ax.get_xlim()
+    ax.set_xlim(xmin_current, max(xmax_current, XMAX))
+
+    _apply_loglog_fit_with_bands(
+        ax,
+        series,
+        show_bands=show_bands,
+        band_height=band_height,
+        band_alpha=band_alpha,
+    )
+
+    ax.set_xlabel("Num qubits", fontsize=15)
+    if rz_layer:
+        ax.set_ylabel("Num RZ layer", fontsize=15)
+    else:
+        ax.set_ylabel("T-depth", fontsize=15)
+    ax.grid(True, which="minor", axis="y", linestyle=":", linewidth=0.5, alpha=0.35)
+    ax.grid(True, which="major", axis="y", linestyle="-", linewidth=0.8, alpha=0.6)
     plt.show()
 
 

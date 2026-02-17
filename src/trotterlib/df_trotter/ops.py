@@ -172,7 +172,22 @@ def U_to_qiskit_ops_jw(U: np.ndarray) -> list[tuple[Any, Tuple[int, ...]]]:
     except ImportError:
         return _dense_gaussian_unitary_ops(U)
 
-    circ = BogoliubovTransform(U)
+    # circ = BogoliubovTransform(U)
+    circ = BogoliubovTransform(U.T)
+
+    qr = circ.qregs[0] if circ.qregs else QuantumRegister(num_qubits)
+    return _normalize_u_ops(circ, qr)
+
+
+def U_to_qiskit_ops_jw_givens(U: np.ndarray) -> list[tuple[Any, Tuple[int, ...]]]:
+    """Convert a fermionic Gaussian unitary into Givens-style Qiskit ops (cost path)."""
+    U = np.asarray(U)
+    if U.ndim != 2 or U.shape[0] != U.shape[1]:
+        raise ValueError("U must be a square matrix.")
+    num_qubits = U.shape[0]
+
+    BogoliubovTransform = _import_bogoliubov_transform()
+    circ = BogoliubovTransform(U.T)
     qr = circ.qregs[0] if circ.qregs else QuantumRegister(num_qubits)
     return _normalize_u_ops(circ, qr)
 
@@ -274,9 +289,28 @@ def build_df_blocks(
     return blocks
 
 
+def build_df_blocks_givens(
+    model: Any, *, sort: str = "descending_abs"
+) -> list[DFBlock]:
+    blocks = []
+    for lam, g_mat in zip(model.lambdas, model.G_list):
+        U, eta = diag_hermitian(g_mat, sort=sort, assume_hermitian=True)
+        u_ops = U_to_qiskit_ops_jw_givens(U)
+        blocks.append(DFBlock(U_ops=u_ops, eta=eta, lam=_as_real(lam, "lambda")))
+    return blocks
+
+
 def build_one_body_gaussian_block(
     one_body: np.ndarray, *, sort: str = "descending_abs"
 ) -> OneBodyGaussianBlock:
     U, eps = diag_hermitian(one_body, sort=sort, assume_hermitian=True)
     u_ops = U_to_qiskit_ops_jw(U)
+    return OneBodyGaussianBlock(U_ops=u_ops, eps=eps)
+
+
+def build_one_body_gaussian_block_givens(
+    one_body: np.ndarray, *, sort: str = "descending_abs"
+) -> OneBodyGaussianBlock:
+    U, eps = diag_hermitian(one_body, sort=sort, assume_hermitian=True)
+    u_ops = U_to_qiskit_ops_jw_givens(U)
     return OneBodyGaussianBlock(U_ops=u_ops, eps=eps)

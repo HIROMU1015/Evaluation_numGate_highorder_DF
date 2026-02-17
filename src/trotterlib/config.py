@@ -33,11 +33,13 @@ ARTIFACTS_DIR = PROJECT_ROOT / "artifacts"
 PICKLE_DIR = "trotter_expo_coeff"          # :contentReference[oaicite:2]{index=2}
 PICKLE_DIR_GROUPED = "trotter_expo_coeff_gr"  # :contentReference[oaicite:3]{index=3}
 PICKLE_DIR_GROUPED_ORIGINAL = "trotter_expo_coeff_gr_original"
+PICKLE_DIR_DF = "trotter_expo_coeff_df"
 
 # 実際に使う Path（ここを保存/読込の基準にする）
 PICKLE_DIR_PATH = ARTIFACTS_DIR / PICKLE_DIR
 PICKLE_DIR_GROUPED_PATH = ARTIFACTS_DIR / PICKLE_DIR_GROUPED
 PICKLE_DIR_GROUPED_ORIGINAL_PATH = ARTIFACTS_DIR / PICKLE_DIR_GROUPED_ORIGINAL
+PICKLE_DIR_DF_PATH = ARTIFACTS_DIR / PICKLE_DIR_DF
 
 # もし matrix/ calculation/ も同じ階層に寄せたいなら
 MATRIX_DIR = ARTIFACTS_DIR / "matrix"
@@ -48,7 +50,7 @@ def ensure_artifact_dirs(*, include_pickle_dirs: bool = True) -> None:
     # 生成対象のディレクトリを列挙
     dirs = [ARTIFACTS_DIR, MATRIX_DIR, CALCULATION_DIR]
     if include_pickle_dirs:
-        dirs.extend([PICKLE_DIR_PATH, PICKLE_DIR_GROUPED_PATH])
+        dirs.extend([PICKLE_DIR_PATH, PICKLE_DIR_GROUPED_PATH, PICKLE_DIR_DF_PATH])
     # 必要なら作成
     for d in dirs:
         d.mkdir(parents=True, exist_ok=True)
@@ -80,6 +82,70 @@ CA = 1.59360010199040e-3   # :contentReference[oaicite:8]{index=8}
 
 # 外挿などで使う target error
 TARGET_ERROR = CA / 10
+
+# DF の rank_fraction 推定に使う CCSD 誤差目標（化学的精度の 1/100）
+DEFAULT_DF_CCSD_TARGET_ERROR_HA = CA / 100
+
+# molecule_type -> DF rank_fraction (CCSD 誤差基準)。
+# `trotterlib.ccsd.populate_df_rank_fraction_config(...)` で更新可能。
+DF_RANK_FRACTION_BY_MOLECULE: Dict[int, float] = {
+    2: 0.75, 
+    3: 0.5555555555555556, 
+    4: 0.4375, 
+    5: 0.36, 
+    6: 0.3055555555555556,
+    7: 0.2653061224489796,
+    }
+
+# molecule_type -> DF rank selection metadata.
+# 形式: {"rank_fraction": float, "selected_rank": int, "full_rank": int, "rank_ratio": "L/full"}
+DF_RANK_SELECTION_BY_MOLECULE: Dict[int, Dict[str, float | int | str]] = {2: {'rank_fraction': 0.75, 'selected_rank': 3, 'full_rank': 4, 'rank_ratio': '3/4'}, 3: {'rank_fraction': 0.5555555555555556, 'selected_rank': 5, 'full_rank': 9, 'rank_ratio': '5/9'}, 4: {'rank_fraction': 0.4375, 'selected_rank': 7, 'full_rank': 16, 'rank_ratio': '7/16'}, 5: {'rank_fraction': 0.36, 'selected_rank': 9, 'full_rank': 25, 'rank_ratio': '9/25'}, 6: {'rank_fraction': 0.3055555555555556, 'selected_rank': 11, 'full_rank': 36, 'rank_ratio': '11/36'}, 7: {'rank_fraction': 0.2653061224489796, 'selected_rank': 13, 'full_rank': 49, 'rank_ratio': '13/49'}, 8: {'rank_fraction': 0.234375, 'selected_rank': 15, 'full_rank': 64, 'rank_ratio': '15/64'}, 9: {'rank_fraction': 0.20987654320987653, 'selected_rank': 17, 'full_rank': 81, 'rank_ratio': '17/81'}, 10: {'rank_fraction': 0.25, 'selected_rank': 25, 'full_rank': 100, 'rank_ratio': '25/100'}}
+
+
+def get_df_rank_fraction_for_molecule(molecule_type: int) -> float | None:
+    """設定済みの molecule_type 用 rank_fraction を返す。未設定なら None。"""
+    return DF_RANK_FRACTION_BY_MOLECULE.get(int(molecule_type))
+
+
+def get_df_rank_selection_for_molecule(
+    molecule_type: int,
+) -> Dict[str, float | int | str] | None:
+    """設定済みの molecule_type 用 rank 選択情報を返す。未設定なら None。"""
+    return DF_RANK_SELECTION_BY_MOLECULE.get(int(molecule_type))
+
+
+def set_df_rank_fraction_for_molecule(
+    molecule_type: int,
+    rank_fraction: float,
+    *,
+    selected_rank: int | None = None,
+    full_rank: int | None = None,
+) -> None:
+    """molecule_type 用 rank_fraction 設定を更新し、rank 選択情報も保持する。"""
+    molecule_key = int(molecule_type)
+    fraction_value = float(rank_fraction)
+    DF_RANK_FRACTION_BY_MOLECULE[molecule_key] = fraction_value
+
+    if full_rank is None:
+        full_rank_value = max(1, molecule_key**2)
+    else:
+        full_rank_value = max(1, int(full_rank))
+    if selected_rank is None:
+        selected_rank_value = int(round(full_rank_value * fraction_value))
+    else:
+        selected_rank_value = int(selected_rank)
+    selected_rank_value = max(1, min(selected_rank_value, full_rank_value))
+
+    DF_RANK_SELECTION_BY_MOLECULE[molecule_key] = {
+        "rank_fraction": fraction_value,
+        "selected_rank": selected_rank_value,
+        "full_rank": full_rank_value,
+        "rank_ratio": f"{selected_rank_value}/{full_rank_value}",
+    }
+
+
+for _molecule_type, _fraction in list(DF_RANK_FRACTION_BY_MOLECULE.items()):
+    set_df_rank_fraction_for_molecule(_molecule_type, _fraction)
 
 
 # =========================
