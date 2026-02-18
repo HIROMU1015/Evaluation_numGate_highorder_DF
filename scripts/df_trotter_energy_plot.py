@@ -20,11 +20,17 @@ from trotterlib.chemistry_hamiltonian import geo
 from trotterlib.config import (
     DEFAULT_BASIS,
     DEFAULT_DISTANCE,
+    DEFAULT_DF_TIME_STEP,
+    DEFAULT_DF_TIME_WINDOW,
     PFLabel,
+    PF_RZ_LAYER,
     PICKLE_DIR_DF_PATH,
+    PICKLE_DIR_DF_RZ_LAYER_PATH,
+    get_default_df_time_for_molecule_pf,
     get_df_rank_fraction_for_molecule,
     get_df_rank_selection_for_molecule,
     normalize_pf_label,
+    pf_order,
 )
 from trotterlib.df_trotter.decompose import df_decompose_from_integrals, diag_hermitian
 from trotterlib.df_trotter.model import Block, DFModel
@@ -46,7 +52,7 @@ from trotterlib.df_trotter.two_body import (
 from qiskit.quantum_info import Operator, SparsePauliOp
 
 from trotterlib.df_trotter.circuit import build_df_trotter_circuit, simulate_statevector
-from trotterlib.analysis_utils import loglog_fit, print_loglog_fit
+from trotterlib.analysis_utils import loglog_average_coeff, loglog_fit, print_loglog_fit
 from trotterlib.eig_error import error_cal_multi
 from trotterlib.plot_utils import set_loglog_axes
 from trotterlib.qiskit_time_evolution_pyscf import (
@@ -330,6 +336,24 @@ def _save_df_plot_artifact(file_name: str, data: dict[str, object]) -> None:
         pickle.dump(data, f)
 
 
+def _save_df_rz_layer_artifact(file_name: str, data: dict[str, object]) -> None:
+    PICKLE_DIR_DF_RZ_LAYER_PATH.mkdir(parents=True, exist_ok=True)
+    path = PICKLE_DIR_DF_RZ_LAYER_PATH / file_name
+    with path.open("wb") as f:
+        pickle.dump(data, f)
+
+
+def _load_df_rz_layer_artifact(file_name: str) -> dict[str, object] | None:
+    path = PICKLE_DIR_DF_RZ_LAYER_PATH / file_name
+    if not path.exists():
+        return None
+    with path.open("rb") as f:
+        data = pickle.load(f)
+    if isinstance(data, dict):
+        return data
+    return None
+
+
 def _collect_df_rz_layer_metrics(costs: dict[str, object]) -> dict[str, int]:
     def _to_int(value: object) -> int | None:
         try:
@@ -361,6 +385,12 @@ def _collect_df_rz_layer_metrics(costs: dict[str, object]) -> dict[str, int]:
             totals.get("d_nonclifford_rz_depth")
         )
 
+    totals_rz = costs.get("rz_total_ud")
+    if isinstance(totals_rz, dict):
+        metrics["total_ref_rz_depth"] = _to_int(totals_rz.get("total_rz_depth"))
+        metrics["u_ref_rz_depth"] = _to_int(totals_rz.get("u_rz_depth"))
+        metrics["d_ref_rz_depth"] = _to_int(totals_rz.get("d_rz_depth"))
+
     proxy_totals = costs.get("toffoli_proxy_total")
     if isinstance(proxy_totals, dict):
         metrics["total_nonclifford_z_depth"] = _to_int(
@@ -374,6 +404,125 @@ def _collect_df_rz_layer_metrics(costs: dict[str, object]) -> dict[str, int]:
         )
 
     return {key: value for key, value in metrics.items() if value is not None}
+
+
+def _collect_df_ud_rz_layer_metrics(costs: dict[str, object]) -> dict[str, object]:
+    def _to_int(value: object) -> int | None:
+        try:
+            return int(value) if value is not None else None
+        except (TypeError, ValueError):
+            return None
+
+    metrics: dict[str, object] = {}
+    totals_rz = costs.get("rz_total_ud")
+    if isinstance(totals_rz, dict):
+        for key in (
+            "u_rz_count",
+            "u_rz_depth",
+            "d_rz_count",
+            "d_rz_depth",
+            "total_rz_count",
+            "total_rz_depth",
+        ):
+            value = _to_int(totals_rz.get(key))
+            if value is not None:
+                metrics[key] = value
+
+    totals = costs.get("nonclifford_total")
+    if isinstance(totals, dict):
+        for key in (
+            "u_nonclifford_rz_count",
+            "u_nonclifford_rz_depth",
+            "d_nonclifford_rz_count",
+            "d_nonclifford_rz_depth",
+            "total_nonclifford_rz_count",
+            "total_nonclifford_rz_depth",
+        ):
+            value = _to_int(totals.get(key))
+            if value is not None:
+                metrics[key] = value
+
+    u_blocks: list[dict[str, object]] = []
+    for entry in costs.get("u_costs", []):
+        if not isinstance(entry, dict):
+            continue
+        block: dict[str, object] = {"label": str(entry.get("label", "U"))}
+        rz_count = _to_int(entry.get("u_ref_rz_count"))
+        rz_depth = _to_int(entry.get("u_ref_rz_depth"))
+        count = _to_int(entry.get("u_nonclifford_rz_count"))
+        depth = _to_int(entry.get("u_nonclifford_rz_depth"))
+        if rz_count is not None:
+            block["rz_count"] = rz_count
+        if rz_depth is not None:
+            block["rz_depth"] = rz_depth
+        if count is not None:
+            block["nonclifford_rz_count"] = count
+        if depth is not None:
+            block["nonclifford_rz_depth"] = depth
+        if len(block) > 1:
+            u_blocks.append(block)
+    if u_blocks:
+        metrics["u_block_costs"] = u_blocks
+
+    d_blocks: list[dict[str, object]] = []
+    for entry in costs.get("d_block_costs", []):
+        if not isinstance(entry, dict):
+            continue
+        block = {"label": str(entry.get("label", "D"))}
+        rz_count = _to_int(entry.get("rz_count"))
+        rz_depth = _to_int(entry.get("rz_depth"))
+        count = _to_int(entry.get("nonclifford_rz_count"))
+        depth = _to_int(entry.get("nonclifford_rz_depth"))
+        if rz_count is not None:
+            block["rz_count"] = rz_count
+        if rz_depth is not None:
+            block["rz_depth"] = rz_depth
+        if count is not None:
+            block["nonclifford_rz_count"] = count
+        if depth is not None:
+            block["nonclifford_rz_depth"] = depth
+        if len(block) > 1:
+            d_blocks.append(block)
+    if d_blocks:
+        metrics["d_block_costs"] = d_blocks
+
+    return metrics
+
+
+def _default_df_time_or_raise(
+    *,
+    molecule_type: int,
+    pf_label: PFLabel,
+) -> float:
+    t_default = get_default_df_time_for_molecule_pf(
+        int(molecule_type), pf_label
+    )
+    if t_default is None:
+        raise ValueError(
+            "Default DF time is not configured for "
+            f"molecule_type={int(molecule_type)}."
+        )
+    return float(t_default)
+
+
+def _resolve_plot_time_range(
+    *,
+    molecule_type: int,
+    pf_label: PFLabel,
+    t_start: float | None,
+    t_end: float | None,
+    t_step: float | None,
+) -> tuple[float, float, float]:
+    if t_start is None:
+        t_start = _default_df_time_or_raise(
+            molecule_type=int(molecule_type),
+            pf_label=pf_label,
+        )
+    if t_step is None:
+        t_step = float(DEFAULT_DF_TIME_STEP)
+    if t_end is None:
+        t_end = float(t_start + DEFAULT_DF_TIME_WINDOW)
+    return float(t_start), float(t_end), float(t_step)
 
 
 def _select_rank_from_ccsd_target(
@@ -1322,6 +1471,284 @@ def _build_d_block_circuit(
     return qc
 
 
+def _compute_df_rz_costs(
+    *,
+    model: DFModel,
+    h_eff: np.ndarray,
+    pf_label: PFLabel,
+    t_cost: float,
+    energy_shift: float,
+    debug: bool,
+    debug_print: Callable[[str], None],
+    cost_basis_gates: Sequence[str] | None,
+    cost_decompose_reps: int,
+    cost_optimization_level: int,
+    trace_u_debug: bool = False,
+    ccsd_selection: dict[str, Any] | None = None,
+) -> dict[str, object]:
+    rz_costs: dict[str, object] = {}
+    if ccsd_selection is not None:
+        rz_costs["ccsd_rank_selection"] = ccsd_selection
+
+    one_body_block_cost = build_one_body_gaussian_block_givens(h_eff)
+    df_blocks_cost = build_df_blocks_givens(model)
+    blocks_cost: list[Block] = []
+    blocks_cost.append(Block.from_one_body_gaussian(one_body_block_cost))
+    blocks_cost.extend(Block.from_df(b) for b in df_blocks_cost)
+
+    if trace_u_debug:
+        debug_trace_u_decomposition(
+            one_body_block_cost.U_ops,
+            "U one_body",
+            num_qubits=model.N,
+            decompose_reps=cost_decompose_reps,
+            basis_gates=cost_basis_gates,
+            opt_level=cost_optimization_level,
+            debug_print=debug_print,
+        )
+        for idx, df_block in enumerate(df_blocks_cost):
+            debug_trace_u_decomposition(
+                df_block.U_ops,
+                f"U df[{idx}]",
+                num_qubits=model.N,
+                decompose_reps=cost_decompose_reps,
+                basis_gates=cost_basis_gates,
+                opt_level=cost_optimization_level,
+                debug_print=debug_print,
+            )
+        d_one_body_qc = _build_d_block_circuit(
+            blocks_cost[0],
+            t_cost,
+            num_qubits=model.N,
+        )
+        debug_trace_u_decomposition(
+            d_one_body_qc,
+            "D one_body",
+            decompose_reps=cost_decompose_reps,
+            basis_gates=cost_basis_gates,
+            opt_level=cost_optimization_level,
+            debug_print=debug_print,
+        )
+        for idx, blk in enumerate(blocks_cost[1:]):
+            d_blk_qc = _build_d_block_circuit(
+                blk,
+                t_cost,
+                num_qubits=model.N,
+            )
+            debug_trace_u_decomposition(
+                d_blk_qc,
+                f"D df[{idx}]",
+                decompose_reps=cost_decompose_reps,
+                basis_gates=cost_basis_gates,
+                opt_level=cost_optimization_level,
+                debug_print=debug_print,
+            )
+
+    qc_cost = build_df_trotter_circuit(
+        blocks_cost,
+        time=t_cost,
+        num_qubits=model.N,
+        pf_label=pf_label,
+        energy_shift=energy_shift,
+    )
+    if any(inst.operation.name.lower() == "unitary" for inst in qc_cost.data):
+        raise RuntimeError(
+            "UnitaryGate found in cost circuit; Givens expansion failed."
+        )
+    rz_costs.update(
+        rz_costs_from_circuit(
+            qc_cost,
+            basis_gates=cost_basis_gates,
+            decompose_reps=cost_decompose_reps,
+            optimization_level=cost_optimization_level,
+        )
+    )
+
+    d_only_qc = _build_d_only_cost_circuit(
+        blocks_cost,
+        t_cost,
+        num_qubits=model.N,
+        pf_label=pf_label,
+    )
+    if any(inst.operation.name.lower() == "unitary" for inst in d_only_qc.data):
+        raise RuntimeError("UnitaryGate found in D-only cost circuit.")
+    d_only_cost = nonclifford_rz_costs_from_circuit(
+        d_only_qc,
+        basis_gates=cost_basis_gates,
+        decompose_reps=cost_decompose_reps,
+        optimization_level=cost_optimization_level,
+    )
+    d_only_proxy_cost = d_nonclifford_costs_from_circuit(
+        d_only_qc,
+        debug=debug,
+        debug_print=debug_print,
+    )
+
+    u_costs: list[dict[str, object]] = []
+    ob_cost = u_nonclifford_costs_from_u_ops(
+        one_body_block_cost.U_ops,
+        model.N,
+        debug=debug,
+        debug_print=debug_print,
+    )
+    ob_ref_cost = rz_costs_from_u_ops(
+        one_body_block_cost.U_ops,
+        model.N,
+        basis_gates=cost_basis_gates,
+        decompose_reps=cost_decompose_reps,
+        optimization_level=cost_optimization_level,
+    )
+    ob_cost["u_ref_rz_count"] = int(ob_ref_cost.get("rz_count", 0))
+    ob_cost["u_ref_rz_depth"] = int(ob_ref_cost.get("rz_depth", 0))
+    ob_cost["label"] = "one_body"
+    u_costs.append(ob_cost)
+
+    d_qc = QuantumCircuit(model.N)
+    apply_D_one_body(d_qc, one_body_block_cost.eps, 1.0)
+    d_cost = nonclifford_rz_costs_from_circuit(
+        d_qc,
+        basis_gates=cost_basis_gates,
+        decompose_reps=cost_decompose_reps,
+        optimization_level=cost_optimization_level,
+    )
+    d_cost_proxy = d_nonclifford_costs_from_circuit(
+        d_qc,
+        debug=debug,
+        debug_print=debug_print,
+    )
+
+    d_block_costs: list[dict[str, object]] = []
+    d_block_proxy_costs: list[dict[str, object]] = []
+    d_cost["label"] = "one_body_D"
+    d_block_costs.append(d_cost)
+    d_cost_proxy["label"] = "one_body_D_proxy"
+    d_block_proxy_costs.append(d_cost_proxy)
+
+    for idx, df_block in enumerate(df_blocks_cost):
+        df_cost = u_nonclifford_costs_from_u_ops(
+            df_block.U_ops,
+            model.N,
+            debug=debug,
+            debug_print=debug_print,
+        )
+        df_ref_cost = rz_costs_from_u_ops(
+            df_block.U_ops,
+            model.N,
+            basis_gates=cost_basis_gates,
+            decompose_reps=cost_decompose_reps,
+            optimization_level=cost_optimization_level,
+        )
+        df_cost["u_ref_rz_count"] = int(df_ref_cost.get("rz_count", 0))
+        df_cost["u_ref_rz_depth"] = int(df_ref_cost.get("rz_depth", 0))
+        df_cost["label"] = f"df[{idx}]"
+        u_costs.append(df_cost)
+
+        d_blk_qc = _build_d_block_circuit(
+            blocks_cost[idx + 1],
+            t_cost,
+            num_qubits=model.N,
+        )
+        d_blk_cost = nonclifford_rz_costs_from_circuit(
+            d_blk_qc,
+            basis_gates=cost_basis_gates,
+            decompose_reps=cost_decompose_reps,
+            optimization_level=cost_optimization_level,
+        )
+        d_blk_proxy_cost = d_nonclifford_costs_from_circuit(
+            d_blk_qc,
+            debug=debug,
+            debug_print=debug_print,
+        )
+        d_blk_cost["label"] = f"df[{idx}]_D"
+        d_block_costs.append(d_blk_cost)
+        d_blk_proxy_cost["label"] = f"df[{idx}]_D_proxy"
+        d_block_proxy_costs.append(d_blk_proxy_cost)
+
+    rz_costs["u_costs"] = u_costs
+    rz_costs["d_only_costs"] = d_only_cost
+    rz_costs["d_block_costs"] = d_block_costs
+    rz_costs["d_only_proxy_costs"] = d_only_proxy_cost
+    rz_costs["d_block_proxy_costs"] = d_block_proxy_costs
+
+    weights = _get_w_list(pf_label)
+    u_total_count = 0
+    u_total_depth = 0
+    u_total_coloring_depth = 0
+    u_total_ref_count = 0
+    u_total_ref_depth = 0
+    for term_idx, _weight in iter_pf_steps(len(blocks_cost), weights):
+        blk = blocks_cost[term_idx]
+        if blk.kind == "one_body_gaussian":
+            cost = u_costs[0]
+        elif blk.kind == "df":
+            df_i = term_idx - 1
+            cost = u_costs[df_i + 1]
+        else:
+            continue
+        u_total_count += 2 * int(cost.get("u_nonclifford_rz_count", 0))
+        u_total_depth += 2 * int(cost.get("u_nonclifford_rz_depth", 0))
+        u_total_coloring_depth += 2 * int(
+            cost.get("u_nonclifford_z_coloring_depth", 0)
+        )
+        u_total_ref_count += 2 * int(cost.get("u_ref_rz_count", 0))
+        u_total_ref_depth += 2 * int(cost.get("u_ref_rz_depth", 0))
+
+    d_total_count = int(d_only_cost.get("nonclifford_rz_count", 0))
+    d_total_depth = int(d_only_cost.get("nonclifford_rz_depth", 0))
+    d_total_ref_count = int(d_only_cost.get("rz_count", 0))
+    d_total_ref_depth = int(d_only_cost.get("rz_depth", 0))
+    rz_costs["nonclifford_total"] = {
+        "u_nonclifford_rz_count": u_total_count,
+        "u_nonclifford_rz_depth": u_total_depth,
+        "d_nonclifford_rz_count": d_total_count,
+        "d_nonclifford_rz_depth": d_total_depth,
+        "total_nonclifford_rz_count": u_total_count + d_total_count,
+        "total_nonclifford_rz_depth": u_total_depth + d_total_depth,
+    }
+    rz_costs["rz_total_ud"] = {
+        "u_rz_count": u_total_ref_count,
+        "u_rz_depth": u_total_ref_depth,
+        "d_rz_count": d_total_ref_count,
+        "d_rz_depth": d_total_ref_depth,
+        "total_rz_count": u_total_ref_count + d_total_ref_count,
+        "total_rz_depth": u_total_ref_depth + d_total_ref_depth,
+    }
+
+    d_proxy_count = int(d_only_proxy_cost.get("nonclifford_total", 0))
+    d_proxy_depth = int(d_only_proxy_cost.get("combined_nonclifford_depth", 0))
+    d_total_coloring_depth = 0
+    for term_idx, _weight in iter_pf_steps(len(blocks_cost), weights):
+        blk = blocks_cost[term_idx]
+        if blk.kind == "one_body_gaussian":
+            d_cost_term = d_block_proxy_costs[0]
+        elif blk.kind == "df":
+            df_i = term_idx - 1
+            d_cost_term = d_block_proxy_costs[df_i + 1]
+        else:
+            continue
+        d_total_coloring_depth += int(
+            d_cost_term.get("coloring_nonclifford_depth", 0)
+        )
+    rz_costs["toffoli_proxy_total"] = {
+        "u_nonclifford_z_count": u_total_count,
+        "u_nonclifford_z_depth": u_total_depth,
+        "d_nonclifford_z_count": d_proxy_count,
+        "d_nonclifford_z_depth": d_proxy_depth,
+        "total_nonclifford_z_count": u_total_count + d_proxy_count,
+        "total_nonclifford_z_depth": u_total_depth + d_proxy_depth,
+    }
+    rz_costs["toffoli_proxy_total_coloring"] = {
+        "u_nonclifford_z_count": u_total_count,
+        "u_nonclifford_z_depth": u_total_coloring_depth,
+        "d_nonclifford_z_count": d_proxy_count,
+        "d_nonclifford_z_depth": d_total_coloring_depth,
+        "total_nonclifford_z_count": u_total_count + d_proxy_count,
+        "total_nonclifford_z_depth": u_total_coloring_depth + d_total_coloring_depth,
+    }
+
+    return rz_costs
+
+
 def df_trotter_energy_error_curve(
     t_start: float,
     t_end: float,
@@ -1460,232 +1887,24 @@ def df_trotter_energy_error_curve(
     rz_costs: dict[str, object] | None = None
     if ccsd_selection is not None:
         rz_costs = {"ccsd_rank_selection": ccsd_selection}
-    df_blocks_cost: list[DFBlock] | None = None
-    one_body_block_cost: OneBodyGaussianBlock | None = None
     if trace_u_debug or return_costs:
-        one_body_block_cost = build_one_body_gaussian_block_givens(h_eff)
-        df_blocks_cost = build_df_blocks_givens(model)
-
-    if trace_u_debug:
-        t_debug = float(times[0]) if times else float(t_step)
-        debug_trace_u_decomposition(
-            one_body_block_cost.U_ops if one_body_block_cost else one_body_block.U_ops,
-            "U one_body",
-            num_qubits=model.N,
-            decompose_reps=cost_decompose_reps,
-            basis_gates=cost_basis_gates,
-            opt_level=cost_optimization_level,
-            debug_print=debug_print,
-            )
-        for idx, df_block in enumerate(df_blocks_cost or df_blocks):
-            debug_trace_u_decomposition(
-                df_block.U_ops,
-                f"U df[{idx}]",
-                num_qubits=model.N,
-                decompose_reps=cost_decompose_reps,
-                basis_gates=cost_basis_gates,
-                opt_level=cost_optimization_level,
-                debug_print=debug_print,
-            )
-        d_one_body_qc = _build_d_block_circuit(
-            blocks[0],
-            t_debug,
-            num_qubits=model.N,
-        )
-        debug_trace_u_decomposition(
-            d_one_body_qc,
-            "D one_body",
-            decompose_reps=cost_decompose_reps,
-            basis_gates=cost_basis_gates,
-            opt_level=cost_optimization_level,
-            debug_print=debug_print,
-        )
-        df_idx = 0
-        for blk in blocks[1:]:
-            if blk.kind != "df":
-                continue
-            d_blk_qc = _build_d_block_circuit(
-                blk,
-                t_debug,
-                num_qubits=model.N,
-            )
-            debug_trace_u_decomposition(
-                d_blk_qc,
-                f"D df[{df_idx}]",
-                decompose_reps=cost_decompose_reps,
-                basis_gates=cost_basis_gates,
-                opt_level=cost_optimization_level,
-                debug_print=debug_print,
-            )
-            df_idx += 1
-
-    if return_costs:
         t_cost = float(times[0]) if times else float(t_step)
-        blocks_cost: list[Block] = []
-        if one_body_block_cost is None:
-            one_body_block_cost = build_one_body_gaussian_block_givens(h_eff)
-        if df_blocks_cost is None:
-            df_blocks_cost = build_df_blocks_givens(model)
-        blocks_cost.append(Block.from_one_body_gaussian(one_body_block_cost))
-        blocks_cost.extend(Block.from_df(b) for b in df_blocks_cost)
-        qc_cost = build_df_trotter_circuit(
-            blocks_cost,
-            time=t_cost,
-            num_qubits=model.N,
+        computed_costs = _compute_df_rz_costs(
+            model=model,
+            h_eff=h_eff,
             pf_label=pf_label,
+            t_cost=t_cost,
             energy_shift=constant + model.constant_correction,
-        )
-        if any(inst.operation.name.lower() == "unitary" for inst in qc_cost.data):
-            raise RuntimeError(
-                "UnitaryGate found in cost circuit; Givens expansion failed."
-            )
-        rz_costs = rz_costs_from_circuit(
-            qc_cost,
-            basis_gates=cost_basis_gates,
-            decompose_reps=cost_decompose_reps,
-            optimization_level=cost_optimization_level,
-        )
-        if ccsd_selection is not None:
-            rz_costs["ccsd_rank_selection"] = ccsd_selection
-        d_only_qc = _build_d_only_cost_circuit(
-            blocks,
-            t_cost,
-            num_qubits=model.N,
-            pf_label=pf_label,
-        )
-        if any(inst.operation.name.lower() == "unitary" for inst in d_only_qc.data):
-            raise RuntimeError("UnitaryGate found in D-only cost circuit.")
-        d_only_cost = nonclifford_rz_costs_from_circuit(
-            d_only_qc,
-            basis_gates=cost_basis_gates,
-            decompose_reps=cost_decompose_reps,
-            optimization_level=cost_optimization_level,
-        )
-        d_only_proxy_cost = d_nonclifford_costs_from_circuit(
-            d_only_qc,
             debug=debug,
             debug_print=debug_print,
+            cost_basis_gates=cost_basis_gates,
+            cost_decompose_reps=cost_decompose_reps,
+            cost_optimization_level=cost_optimization_level,
+            trace_u_debug=trace_u_debug,
+            ccsd_selection=ccsd_selection,
         )
-        u_costs: list[dict[str, object]] = []
-        ob_cost = u_nonclifford_costs_from_u_ops(
-            one_body_block_cost.U_ops,
-            model.N,
-            debug=debug,
-            debug_print=debug_print,
-        )
-        ob_cost["label"] = "one_body"
-        u_costs.append(ob_cost)
-        d_qc = QuantumCircuit(model.N)
-        apply_D_one_body(d_qc, one_body_block_cost.eps, 1.0)
-        d_cost = nonclifford_rz_costs_from_circuit(
-            d_qc,
-            basis_gates=cost_basis_gates,
-            decompose_reps=cost_decompose_reps,
-            optimization_level=cost_optimization_level,
-        )
-        d_cost_proxy = d_nonclifford_costs_from_circuit(
-            d_qc,
-            debug=debug,
-            debug_print=debug_print,
-        )
-        d_cost["label"] = "one_body_D"
-        u_costs.append(d_cost)
-        d_block_costs: list[dict[str, object]] = []
-        d_block_proxy_costs: list[dict[str, object]] = []
-        d_block_costs.append(d_cost)
-        d_cost_proxy["label"] = "one_body_D_proxy"
-        d_block_proxy_costs.append(d_cost_proxy)
-        for idx, df_block in enumerate(df_blocks_cost):
-            df_cost = u_nonclifford_costs_from_u_ops(
-                df_block.U_ops,
-                model.N,
-                debug=debug,
-                debug_print=debug_print,
-            )
-            df_cost["label"] = f"df[{idx}]"
-            u_costs.append(df_cost)
-            d_blk_qc = _build_d_block_circuit(
-                blocks[idx + 1],
-                t_cost,
-                num_qubits=model.N,
-            )
-            d_blk_cost = nonclifford_rz_costs_from_circuit(
-                d_blk_qc,
-                basis_gates=cost_basis_gates,
-                decompose_reps=cost_decompose_reps,
-                optimization_level=cost_optimization_level,
-            )
-            d_blk_proxy_cost = d_nonclifford_costs_from_circuit(
-                d_blk_qc,
-                debug=debug,
-                debug_print=debug_print,
-            )
-            d_blk_cost["label"] = f"df[{idx}]_D"
-            d_block_costs.append(d_blk_cost)
-            d_blk_proxy_cost["label"] = f"df[{idx}]_D_proxy"
-            d_block_proxy_costs.append(d_blk_proxy_cost)
-        rz_costs["u_costs"] = u_costs
-        rz_costs["d_only_costs"] = d_only_cost
-        rz_costs["d_block_costs"] = d_block_costs
-        rz_costs["d_only_proxy_costs"] = d_only_proxy_cost
-        rz_costs["d_block_proxy_costs"] = d_block_proxy_costs
-        weights = _get_w_list(pf_label)
-        u_total_count = 0
-        u_total_depth = 0
-        u_total_coloring_depth = 0
-        for term_idx, _weight in iter_pf_steps(len(blocks), weights):
-            blk = blocks[term_idx]
-            if blk.kind == "one_body_gaussian":
-                cost = u_costs[0]
-            elif blk.kind == "df":
-                df_i = term_idx - 1
-                cost = u_costs[df_i + 1]
-            else:
-                continue
-            u_total_count += 2 * int(cost.get("u_nonclifford_rz_count", 0))
-            u_total_depth += 2 * int(cost.get("u_nonclifford_rz_depth", 0))
-            u_total_coloring_depth += 2 * int(
-                cost.get("u_nonclifford_z_coloring_depth", 0)
-            )
-        d_total_count = int(d_only_cost.get("nonclifford_rz_count", 0))
-        d_total_depth = int(d_only_cost.get("nonclifford_rz_depth", 0))
-        rz_costs["nonclifford_total"] = {
-            "u_nonclifford_rz_count": u_total_count,
-            "u_nonclifford_rz_depth": u_total_depth,
-            "d_nonclifford_rz_count": d_total_count,
-            "d_nonclifford_rz_depth": d_total_depth,
-            "total_nonclifford_rz_count": u_total_count + d_total_count,
-            "total_nonclifford_rz_depth": u_total_depth + d_total_depth,
-        }
-        d_proxy_count = int(d_only_proxy_cost.get("nonclifford_total", 0))
-        d_proxy_depth = int(d_only_proxy_cost.get("combined_nonclifford_depth", 0))
-        d_total_coloring_depth = 0
-        for term_idx, _weight in iter_pf_steps(len(blocks), weights):
-            blk = blocks[term_idx]
-            if blk.kind == "one_body_gaussian":
-                d_cost = d_block_proxy_costs[0]
-            elif blk.kind == "df":
-                df_i = term_idx - 1
-                d_cost = d_block_proxy_costs[df_i + 1]
-            else:
-                continue
-            d_total_coloring_depth += int(d_cost.get("coloring_nonclifford_depth", 0))
-        rz_costs["toffoli_proxy_total"] = {
-            "u_nonclifford_z_count": u_total_count,
-            "u_nonclifford_z_depth": u_total_depth,
-            "d_nonclifford_z_count": d_proxy_count,
-            "d_nonclifford_z_depth": d_proxy_depth,
-            "total_nonclifford_z_count": u_total_count + d_proxy_count,
-            "total_nonclifford_z_depth": u_total_depth + d_proxy_depth,
-        }
-        rz_costs["toffoli_proxy_total_coloring"] = {
-            "u_nonclifford_z_count": u_total_count,
-            "u_nonclifford_z_depth": u_total_coloring_depth,
-            "d_nonclifford_z_count": d_proxy_count,
-            "d_nonclifford_z_depth": d_total_coloring_depth,
-            "total_nonclifford_z_count": u_total_count + d_proxy_count,
-            "total_nonclifford_z_depth": u_total_coloring_depth + d_total_coloring_depth,
-        }
+        if return_costs:
+            rz_costs = computed_costs
 
     energy_ref = None
     psi0 = None
@@ -1860,10 +2079,320 @@ def df_trotter_energy_error_curve(
     return times, errors
 
 
+def df_trotter_ud_rz_layer_counts(
+    *,
+    molecule_type: int = 2,
+    pf_label: PFLabel = "2nd",
+    time: float | None = None,
+    rank: int | None = None,
+    rank_fraction: float | None = None,
+    tol: float | None = None,
+    distance: float | None = None,
+    basis: str | None = None,
+    debug: bool = False,
+    debug_print: Callable[[str], None] = print,
+    cost_basis_gates: Sequence[str] | None = None,
+    cost_decompose_reps: int = 8,
+    cost_optimization_level: int = 0,
+    trace_u_debug: bool = False,
+    ccsd_target_error_ha: float | None = None,
+    ccsd_thresh_range: Sequence[float] | None = None,
+    ccsd_use_kernel: bool = False,
+    ccsd_no_triples: bool = False,
+    save_rz_layers: bool = False,
+) -> dict[str, object]:
+    """Count U/D RZ-layer costs without running statevector evolution."""
+    pf_label = normalize_pf_label(pf_label)
+    if time is None:
+        time = _default_df_time_or_raise(
+            molecule_type=int(molecule_type),
+            pf_label=pf_label,
+        )
+        if debug:
+            debug_print(
+                "time from config: "
+                f"molecule_type={int(molecule_type)} "
+                f"pf_label={pf_label} "
+                f"time={float(time):.6f}"
+            )
+    if time <= 0:
+        raise ValueError("time must be positive.")
+
+    if rank is None and rank_fraction is None and ccsd_target_error_ha is None:
+        config_rank_fraction = get_df_rank_fraction_for_molecule(int(molecule_type))
+        if config_rank_fraction is not None:
+            rank_fraction = float(config_rank_fraction)
+            if debug:
+                debug_print(
+                    "rank_fraction from config: "
+                    f"molecule_type={int(molecule_type)} "
+                    f"rank_fraction={rank_fraction:.6f}"
+                )
+
+    if ccsd_target_error_ha is not None:
+        if rank is not None or rank_fraction is not None:
+            raise ValueError(
+                "ccsd_target_error_ha cannot be combined with rank or rank_fraction."
+            )
+        if ccsd_target_error_ha <= 0:
+            raise ValueError("ccsd_target_error_ha must be positive.")
+        if distance is not None or basis is not None:
+            raise ValueError(
+                "ccsd_target_error_ha currently requires distance=None and basis=None."
+            )
+
+    ccsd_selection: dict[str, Any] | None = None
+    if ccsd_target_error_ha is not None:
+        rank, selected_fraction, ccsd_selection = _select_rank_from_ccsd_target(
+            molecule_type,
+            target_error_ha=float(ccsd_target_error_ha),
+            thresh_range=ccsd_thresh_range,
+            use_kernel=ccsd_use_kernel,
+            no_triples=ccsd_no_triples,
+            record_in_config=True,
+        )
+        _, _, constant, one_body, two_body = _run_scf_and_integrals(molecule_type)
+        if debug:
+            debug_print(
+                "ccsd rank selection: "
+                f"target={float(ccsd_target_error_ha):.6e}Ha "
+                f"selected_rank={rank} "
+                f"selected_fraction={selected_fraction:.6f} "
+                f"abs_error={float(ccsd_selection['selected_abs_ccsd_error_ha']):.6e}Ha "
+                f"threshold={float(ccsd_selection['selected_threshold']):.6e} "
+                f"target_met={bool(ccsd_selection['target_met'])} "
+                f"scan={int(ccsd_selection.get('thresholds_evaluated', 0))}/"
+                f"{int(ccsd_selection.get('thresholds_total', 0))} "
+                f"stopped_early={bool(ccsd_selection.get('stopped_early', False))}"
+            )
+    else:
+        constant, one_body, two_body = _h_chain_integrals(
+            molecule_type,
+            distance=distance,
+            basis=basis,
+        )
+
+    if ccsd_target_error_ha is None and rank_fraction is not None:
+        if rank is not None:
+            raise ValueError("rank and rank_fraction are mutually exclusive.")
+        if rank_fraction <= 0:
+            raise ValueError("rank_fraction must be positive.")
+        n_spatial = int(one_body.shape[0])
+        full_rank = int(n_spatial**2)
+        if rank_fraction >= 1.0:
+            rank = full_rank
+            if tol is None:
+                tol = 0.0
+        else:
+            rank = int(round(full_rank * rank_fraction))
+            rank = max(1, min(rank, full_rank))
+    elif rank_fraction is not None:
+        raise ValueError("rank_fraction cannot be set when ccsd_target_error_ha is used.")
+
+    two_body = _symmetrize_two_body(two_body)
+    one_body_spin, _ = spinorb_from_spatial(one_body, two_body * 0.5)
+    raw_model = df_decompose_from_integrals(
+        one_body,
+        two_body,
+        constant=constant,
+        rank=rank,
+        tol=tol,
+    )
+    model = raw_model.hermitize()
+    h_eff = one_body_spin + model.one_body_correction
+
+    costs = _compute_df_rz_costs(
+        model=model,
+        h_eff=h_eff,
+        pf_label=pf_label,
+        t_cost=float(time),
+        energy_shift=constant + model.constant_correction,
+        debug=debug,
+        debug_print=debug_print,
+        cost_basis_gates=cost_basis_gates,
+        cost_decompose_reps=cost_decompose_reps,
+        cost_optimization_level=cost_optimization_level,
+        trace_u_debug=trace_u_debug,
+        ccsd_selection=ccsd_selection,
+    )
+    metrics = _collect_df_ud_rz_layer_metrics(costs)
+    metrics["molecule_type"] = int(molecule_type)
+    metrics["num_qubits"] = int(model.N)
+    metrics["pf_label"] = str(pf_label)
+    metrics["time"] = float(time)
+    if ccsd_selection is not None:
+        metrics["ccsd_rank_selection"] = ccsd_selection
+    if save_rz_layers:
+        artifact_name = (
+            f"{_artifact_ham_name(molecule_type, distance=distance, basis=basis)}"
+            f"_Operator_{pf_label}"
+        )
+        _save_df_rz_layer_artifact(artifact_name, metrics)
+        metrics["artifact_name"] = artifact_name
+    return metrics
+
+
+def save_df_ud_rz_layer_sweep(
+    molecule_types: Sequence[int],
+    *,
+    pf_label: PFLabel = "2nd",
+    time: float | None = None,
+    rank: int | None = None,
+    rank_fraction: float | None = None,
+    tol: float | None = None,
+    distance: float | None = None,
+    basis: str | None = None,
+    debug: bool = False,
+    debug_print: Callable[[str], None] = print,
+    cost_basis_gates: Sequence[str] | None = None,
+    cost_decompose_reps: int = 8,
+    cost_optimization_level: int = 0,
+    trace_u_debug: bool = False,
+    ccsd_target_error_ha: float | None = None,
+    ccsd_thresh_range: Sequence[float] | None = None,
+    ccsd_use_kernel: bool = False,
+    ccsd_no_triples: bool = False,
+) -> dict[int, dict[str, object]]:
+    out: dict[int, dict[str, object]] = {}
+    for molecule_type in molecule_types:
+        out[int(molecule_type)] = df_trotter_ud_rz_layer_counts(
+            molecule_type=int(molecule_type),
+            pf_label=pf_label,
+            time=time,
+            rank=rank,
+            rank_fraction=rank_fraction,
+            tol=tol,
+            distance=distance,
+            basis=basis,
+            debug=debug,
+            debug_print=debug_print,
+            cost_basis_gates=cost_basis_gates,
+            cost_decompose_reps=cost_decompose_reps,
+            cost_optimization_level=cost_optimization_level,
+            trace_u_debug=trace_u_debug,
+            ccsd_target_error_ha=ccsd_target_error_ha,
+            ccsd_thresh_range=ccsd_thresh_range,
+            ccsd_use_kernel=ccsd_use_kernel,
+            ccsd_no_triples=ccsd_no_triples,
+            save_rz_layers=True,
+        )
+    return out
+
+
+def plot_df_u_rz_depth_vs_num_qubits(
+    molecule_types: Sequence[int],
+    *,
+    pf_label: PFLabel = "2nd",
+    distance: float | None = None,
+    basis: str | None = None,
+    include_pf_rz_layer: bool = True,
+    show_d_rz_depth: bool = True,
+    show_total_rz_depth: bool = True,
+    show: bool = True,
+    save_path: str | Path | None = None,
+    debug_print: Callable[[str], None] = print,
+) -> dict[str, list[float]]:
+    pf_label = normalize_pf_label(pf_label)
+    xs: list[float] = []
+    ys_u: list[float] = []
+    ys_d: list[float] = []
+    ys_total: list[float] = []
+    ys_pf: list[float] = []
+    xs_pf: list[float] = []
+    missing: list[int] = []
+
+    for molecule_type in sorted({int(m) for m in molecule_types}):
+        artifact_name = (
+            f"{_artifact_ham_name(molecule_type, distance=distance, basis=basis)}"
+            f"_Operator_{pf_label}"
+        )
+        data = _load_df_rz_layer_artifact(artifact_name)
+        if data is None:
+            missing.append(int(molecule_type))
+            continue
+        x = float(data.get("num_qubits", int(molecule_type) * 2))
+        u_depth = data.get("u_rz_depth")
+        d_depth = data.get("d_rz_depth")
+        total_depth = data.get("total_rz_depth")
+        if u_depth is None or d_depth is None or total_depth is None:
+            missing.append(int(molecule_type))
+            continue
+        xs.append(x)
+        ys_u.append(float(u_depth))
+        ys_d.append(float(d_depth))
+        ys_total.append(float(total_depth))
+
+        if include_pf_rz_layer:
+            pf_depth = PF_RZ_LAYER.get(f"H{int(molecule_type)}", {}).get(pf_label)
+            if pf_depth is not None:
+                xs_pf.append(x)
+                ys_pf.append(float(pf_depth))
+
+    if missing:
+        raise FileNotFoundError(
+            "Missing df_rz_layer artifacts or required keys for molecule_type="
+            f"{sorted(set(missing))}. "
+            "Run save_df_ud_rz_layer_sweep(...) or "
+            "df_trotter_ud_rz_layer_counts(..., save_rz_layers=True) first."
+        )
+
+    order = np.argsort(np.asarray(xs))
+    xs = [xs[i] for i in order]
+    ys_u = [ys_u[i] for i in order]
+    ys_d = [ys_d[i] for i in order]
+    ys_total = [ys_total[i] for i in order]
+
+    fig, ax = plt.subplots()
+    ax.plot(xs, ys_u, marker="o", linestyle="-", label="DF u_rz_depth")
+    if show_d_rz_depth:
+        ax.plot(xs, ys_d, marker="d", linestyle="-", label="DF d_rz_depth")
+    if show_total_rz_depth:
+        ax.plot(xs, ys_total, marker="s", linestyle="--", label="DF total_rz_depth")
+    if include_pf_rz_layer and xs_pf:
+        order_pf = np.argsort(np.asarray(xs_pf))
+        xs_pf = [xs_pf[i] for i in order_pf]
+        ys_pf = [ys_pf[i] for i in order_pf]
+        ax.plot(
+            xs_pf,
+            ys_pf,
+            marker="^",
+            linestyle="-.",
+            label="GR_RZ_LAYER",
+        )
+
+    set_loglog_axes(
+        ax,
+        title=f"DF RZ depth vs qubits ({pf_label})",
+    )
+    ax.set_xlabel("Num qubits", fontsize=15)
+    ax.set_ylabel("Num RZ layer", fontsize=15)
+    ax.yaxis.grid(True, which="both", alpha=0.3)
+    ax.xaxis.grid(False, which="both")
+    ax.legend()
+
+    if save_path is not None:
+        path = Path(save_path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        fig.savefig(path, dpi=200, bbox_inches="tight")
+        debug_print(f"saved plot: {path}")
+    if show:
+        plt.show()
+    else:
+        plt.close(fig)
+
+    return {
+        "num_qubits": xs,
+        "u_rz_depth": ys_u,
+        "d_rz_depth": ys_d,
+        "total_rz_depth": ys_total,
+        "pf_rz_depth": ys_pf,
+    }
+
+
 def df_trotter_energy_error_plot(
-    t_start: float,
-    t_end: float,
-    t_step: float,
+    t_start: float | None = None,
+    t_end: float | None = None,
+    t_step: float | None = None,
     *,
     molecule_type: int = 2,
     pf_label: PFLabel = "2nd",
@@ -1890,9 +2419,17 @@ def df_trotter_energy_error_plot(
     ccsd_thresh_range: Sequence[float] | None = None,
     ccsd_use_kernel: bool = False,
     ccsd_no_triples: bool = False,
-    save_fit_params: bool = False,
+    save_fit_params: bool = True,
     save_rz_layers: bool = False,
 ) -> tuple[list[float], list[float]] | tuple[list[float], list[float], dict[str, object]]:
+    pf_label = normalize_pf_label(pf_label)
+    t_start, t_end, t_step = _resolve_plot_time_range(
+        molecule_type=int(molecule_type),
+        pf_label=pf_label,
+        t_start=t_start,
+        t_end=t_end,
+        t_step=t_step,
+    )
     compute_costs_by_default = True
     result = df_trotter_energy_error_curve(
         t_start,
@@ -1971,6 +2508,9 @@ def df_trotter_energy_error_plot(
     ax.plot(times, errors, marker="o", linestyle="-", label=error_label)
     fit_result = None
     fit_error: str | None = None
+    fixed_alpha: float | None = None
+    fixed_alpha_error: str | None = None
+    fixed_exponent: float | None = None
     if fit or save_fit_params:
         try:
             fit_result = loglog_fit(times, errors, mask_nonpositive=True, compute_r2=True)
@@ -1989,6 +2529,26 @@ def df_trotter_energy_error_plot(
             fit_error = str(exc)
             if fit:
                 print(f"log-log fit skipped: {exc}")
+    if fit or save_fit_params:
+        try:
+            fixed_exponent = float(pf_order(pf_label))
+            fixed_alpha = float(
+                loglog_average_coeff(
+                    times,
+                    errors,
+                    fixed_exponent,
+                    mask_nonpositive=True,
+                )
+            )
+            if fit:
+                print(
+                    "fixed-p error coefficient :"
+                    f"{fixed_alpha} (p={fixed_exponent:g})"
+                )
+        except ValueError as exc:
+            fixed_alpha_error = str(exc)
+            if fit:
+                print(f"fixed-p fit skipped: {exc}")
     ax.legend()
     plt.show()
 
@@ -2012,11 +2572,18 @@ def df_trotter_energy_error_plot(
                     payload["r2"] = float(fit_result.r2)
             else:
                 payload["fit_error"] = fit_error or "log-log fit unavailable"
+            if fixed_alpha is not None:
+                payload["fixed_expo"] = float(fixed_exponent) if fixed_exponent is not None else float(pf_order(pf_label))
+                payload["avg_coeff"] = float(fixed_alpha)
+            elif fixed_alpha_error is not None:
+                payload["avg_coeff_fit_error"] = fixed_alpha_error
         if save_rz_layers:
             payload["rz_layers"] = (
                 _collect_df_rz_layer_metrics(costs) if isinstance(costs, dict) else {}
             )
         _save_df_plot_artifact(artifact_name, payload)
+        if save_fit_params and fixed_alpha is not None:
+            _save_df_plot_artifact(f"{artifact_name}_ave", float(fixed_alpha))
 
     if report_costs and costs is not None:
         ccsd_sel = costs.get("ccsd_rank_selection")
@@ -2155,4 +2722,10 @@ def df_trotter_energy_error_plot(
     return times, errors
 
 
-__all__ = ["df_trotter_energy_error_curve", "df_trotter_energy_error_plot"]
+__all__ = [
+    "df_trotter_energy_error_curve",
+    "df_trotter_energy_error_plot",
+    "df_trotter_ud_rz_layer_counts",
+    "save_df_ud_rz_layer_sweep",
+    "plot_df_u_rz_depth_vs_num_qubits",
+]

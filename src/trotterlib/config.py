@@ -34,12 +34,14 @@ PICKLE_DIR = "trotter_expo_coeff"          # :contentReference[oaicite:2]{index=
 PICKLE_DIR_GROUPED = "trotter_expo_coeff_gr"  # :contentReference[oaicite:3]{index=3}
 PICKLE_DIR_GROUPED_ORIGINAL = "trotter_expo_coeff_gr_original"
 PICKLE_DIR_DF = "trotter_expo_coeff_df"
+PICKLE_DIR_DF_RZ_LAYER = "df_rz_layer"
 
 # 実際に使う Path（ここを保存/読込の基準にする）
 PICKLE_DIR_PATH = ARTIFACTS_DIR / PICKLE_DIR
 PICKLE_DIR_GROUPED_PATH = ARTIFACTS_DIR / PICKLE_DIR_GROUPED
 PICKLE_DIR_GROUPED_ORIGINAL_PATH = ARTIFACTS_DIR / PICKLE_DIR_GROUPED_ORIGINAL
 PICKLE_DIR_DF_PATH = ARTIFACTS_DIR / PICKLE_DIR_DF
+PICKLE_DIR_DF_RZ_LAYER_PATH = ARTIFACTS_DIR / PICKLE_DIR_DF_RZ_LAYER
 
 # もし matrix/ calculation/ も同じ階層に寄せたいなら
 MATRIX_DIR = ARTIFACTS_DIR / "matrix"
@@ -50,7 +52,14 @@ def ensure_artifact_dirs(*, include_pickle_dirs: bool = True) -> None:
     # 生成対象のディレクトリを列挙
     dirs = [ARTIFACTS_DIR, MATRIX_DIR, CALCULATION_DIR]
     if include_pickle_dirs:
-        dirs.extend([PICKLE_DIR_PATH, PICKLE_DIR_GROUPED_PATH, PICKLE_DIR_DF_PATH])
+        dirs.extend(
+            [
+                PICKLE_DIR_PATH,
+                PICKLE_DIR_GROUPED_PATH,
+                PICKLE_DIR_DF_PATH,
+                PICKLE_DIR_DF_RZ_LAYER_PATH,
+            ]
+        )
     # 必要なら作成
     for d in dirs:
         d.mkdir(parents=True, exist_ok=True)
@@ -85,25 +94,51 @@ TARGET_ERROR = CA / 10
 
 # DF の rank_fraction 推定に使う CCSD 誤差目標（化学的精度の 1/100）
 DEFAULT_DF_CCSD_TARGET_ERROR_HA = CA / 100
+DEFAULT_DF_TIME_STEP = 0.003
+DEFAULT_DF_TIME_WINDOW = 0.01
 
-# molecule_type -> DF rank_fraction (CCSD 誤差基準)。
-# `trotterlib.ccsd.populate_df_rank_fraction_config(...)` で更新可能。
-DF_RANK_FRACTION_BY_MOLECULE: Dict[int, float] = {
-    2: 0.75, 
-    3: 0.5555555555555556, 
-    4: 0.4375, 
-    5: 0.36, 
-    6: 0.3055555555555556,
-    7: 0.2653061224489796,
-    }
+# molecule_type -> {0: small_time, 1: large_time}
+# 初時間セット
+TIME_DIR_BY_MOLECULE: Dict[int, Dict[int, float]] = {
+    2: {0: 0.73, 1: 2.21},
+    3: {0: 0.75, 1: 2.27},
+    4: {0: 0.37, 1: 1.12},
+    5: {0: 0.36, 1: 1.08},
+    6: {0: 0.25, 1: 1.25},
+    7: {0: 0.23, 1: 1.19},
+    8: {0: 0.18, 1: 0.94},
+    9: {0: 0.18, 1: 0.90},
+    10: {0: 0.15, 1: 0.75},
+    11: {0: 0.14, 1: 0.72},
+    12: {0: 0.12, 1: 0.62},
+    13: {0: 0.12, 1: 0.60},
+    14: {0: 0.10, 1: 0.53},
+    15: {0: 0.10, 1: 0.51},
+}
 
 # molecule_type -> DF rank selection metadata.
 # 形式: {"rank_fraction": float, "selected_rank": int, "full_rank": int, "rank_ratio": "L/full"}
 DF_RANK_SELECTION_BY_MOLECULE: Dict[int, Dict[str, float | int | str]] = {2: {'rank_fraction': 0.75, 'selected_rank': 3, 'full_rank': 4, 'rank_ratio': '3/4'}, 3: {'rank_fraction': 0.5555555555555556, 'selected_rank': 5, 'full_rank': 9, 'rank_ratio': '5/9'}, 4: {'rank_fraction': 0.4375, 'selected_rank': 7, 'full_rank': 16, 'rank_ratio': '7/16'}, 5: {'rank_fraction': 0.36, 'selected_rank': 9, 'full_rank': 25, 'rank_ratio': '9/25'}, 6: {'rank_fraction': 0.3055555555555556, 'selected_rank': 11, 'full_rank': 36, 'rank_ratio': '11/36'}, 7: {'rank_fraction': 0.2653061224489796, 'selected_rank': 13, 'full_rank': 49, 'rank_ratio': '13/49'}, 8: {'rank_fraction': 0.234375, 'selected_rank': 15, 'full_rank': 64, 'rank_ratio': '15/64'}, 9: {'rank_fraction': 0.20987654320987653, 'selected_rank': 17, 'full_rank': 81, 'rank_ratio': '17/81'}, 10: {'rank_fraction': 0.25, 'selected_rank': 25, 'full_rank': 100, 'rank_ratio': '25/100'}}
 
+# Backward-compatible flat view.
+# Source of truth is DF_RANK_SELECTION_BY_MOLECULE.
+DF_RANK_FRACTION_BY_MOLECULE: Dict[int, float] = {
+    int(molecule_type): float(selection["rank_fraction"])
+    for molecule_type, selection in DF_RANK_SELECTION_BY_MOLECULE.items()
+    if "rank_fraction" in selection
+}
+
 
 def get_df_rank_fraction_for_molecule(molecule_type: int) -> float | None:
-    """設定済みの molecule_type 用 rank_fraction を返す。未設定なら None。"""
+    """設定済みの molecule_type 用 rank_fraction を返す。未設定なら None。
+
+    Source of truth is DF_RANK_SELECTION_BY_MOLECULE.
+    """
+    selection = DF_RANK_SELECTION_BY_MOLECULE.get(int(molecule_type))
+    if selection is not None:
+        value = selection.get("rank_fraction")
+        if value is not None:
+            return float(value)
     return DF_RANK_FRACTION_BY_MOLECULE.get(int(molecule_type))
 
 
@@ -144,8 +179,24 @@ def set_df_rank_fraction_for_molecule(
     }
 
 
-for _molecule_type, _fraction in list(DF_RANK_FRACTION_BY_MOLECULE.items()):
-    set_df_rank_fraction_for_molecule(_molecule_type, _fraction)
+for _molecule_type, _selection in list(DF_RANK_SELECTION_BY_MOLECULE.items()):
+    _fraction = _selection.get("rank_fraction")
+    if _fraction is None:
+        continue
+    set_df_rank_fraction_for_molecule(
+        int(_molecule_type),
+        float(_fraction),
+        selected_rank=(
+            int(_selection["selected_rank"])
+            if _selection.get("selected_rank") is not None
+            else None
+        ),
+        full_rank=(
+            int(_selection["full_rank"])
+            if _selection.get("full_rank") is not None
+            else None
+        ),
+    )
 
 
 # =========================
@@ -240,6 +291,29 @@ def pf_order(num_w: PFLabel | None) -> int:
     """PF ラベルから次数を返す。"""
     # P_DIR から次数を引く
     return P_DIR[require_pf_label(num_w)]
+
+
+def get_df_time_dir_for_molecule(molecule_type: int) -> Dict[int, float] | None:
+    """設定済みの molecule_type 用 time_dir を返す。未設定なら None。"""
+    return TIME_DIR_BY_MOLECULE.get(int(molecule_type))
+
+
+def get_default_df_time_for_molecule_pf(
+    molecule_type: int,
+    pf_label: PFLabel | None,
+) -> float | None:
+    """PF ラベルに応じて既定時刻を返す。
+
+    - '8th(Morales)', '10th(Morales)' -> large_time (index=1)
+    - それ以外 -> small_time (index=0)
+    """
+    time_dir = get_df_time_dir_for_molecule(molecule_type)
+    if time_dir is None:
+        return None
+    canonical = normalize_pf_label(pf_label)
+    time_idx = 1 if canonical in {"8th(Morales)", "10th(Morales)"} else 0
+    value = time_dir.get(time_idx)
+    return float(value) if value is not None else None
 
 
 # =========================
