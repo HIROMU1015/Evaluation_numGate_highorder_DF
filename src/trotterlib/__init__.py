@@ -19,6 +19,9 @@ from .cost_extrapolation import (
     num_gate_plot_grouping,
     efficient_accuracy_range_plt_grouper,
 )
+from .grouping_rz_layers import (
+    estimate_rz_layers_from_grouping,
+)
 
 __all__ = [
     "jw_hamiltonian_maker",
@@ -31,4 +34,5 @@ __all__ = [
     "t_depth_extrapolation_diff",
     "num_gate_plot_grouping",
     "efficient_accuracy_range_plt_grouper",
+    "estimate_rz_layers_from_grouping",
 ]

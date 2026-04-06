@@ -15,6 +15,8 @@ from openfermionpyscf import run_pyscf
 from openfermion.chem import MolecularData
 from openfermion.transforms import get_interaction_operator
 from scipy.sparse.linalg import eigsh
+from pyscf import fci, gto
+from pyscf.fci import cistring
 
 from trotterlib.chemistry_hamiltonian import geo
 from trotterlib.config import (
@@ -25,6 +27,7 @@ from trotterlib.config import (
     get_df_rank_fraction_for_molecule,
     get_df_rank_selection_for_molecule,
     normalize_pf_label,
+    pf_order,
 )
 from trotterlib.df_trotter.decompose import df_decompose_from_integrals, diag_hermitian
 from trotterlib.df_trotter.model import Block, DFModel
@@ -304,6 +307,196 @@ def _h_chain_integrals_pyscf(
 ) -> tuple[float, np.ndarray, np.ndarray]:
     _, _, constant, one_body, two_body = _run_scf_and_integrals(molecule_type)
     return float(constant), one_body, two_body
+
+
+def _is_df_reference(reference: str) -> bool:
+    return reference in ("df", "df_fci")
+
+
+def _build_pyscf_molecule(
+    molecule_type: int,
+    *,
+    distance: float | None,
+    basis: str | None,
+) -> gto.Mole:
+    distance_value = DEFAULT_DISTANCE if distance is None else float(distance)
+    basis_value = DEFAULT_BASIS if basis is None else basis
+    geometry, multiplicity, charge = geo(molecule_type, distance_value)
+    mol = gto.Mole()
+    mol.atom = geometry
+    mol.basis = basis_value
+    mol.spin = multiplicity - 1
+    mol.charge = charge
+    mol.symmetry = False
+    mol.build()
+    return mol
+
+
+def _real_if_small_imag(arr: np.ndarray, *, name: str, tol: float) -> np.ndarray:
+    arr_complex = np.asarray(arr, dtype=np.complex128)
+    max_imag = float(np.max(np.abs(arr_complex.imag))) if arr_complex.size else 0.0
+    if max_imag > tol:
+        raise ValueError(
+            f"{name} has non-negligible imaginary part (max|Im|={max_imag:.3e})."
+        )
+    return np.asarray(arr_complex.real, dtype=np.float64)
+
+
+def _df_pyscf_integrals_from_model(
+    constant: float,
+    one_body_spin: np.ndarray,
+    model: DFModel,
+    *,
+    spin_tol: float = 1e-8,
+    imag_tol: float = 1e-8,
+) -> tuple[np.ndarray, np.ndarray, float]:
+    n_spin = int(model.N)
+    if n_spin % 2 != 0:
+        raise ValueError("DF model must have an even number of spin orbitals.")
+
+    h1_in = np.asarray(one_body_spin + model.one_body_correction, dtype=np.complex128)
+    if h1_in.shape != (n_spin, n_spin):
+        raise ValueError("one_body_spin shape is incompatible with model.N.")
+
+    two_body_chemist = np.zeros((n_spin, n_spin, n_spin, n_spin), dtype=np.complex128)
+    for lam, g_mat in zip(model.lambdas, model.G_list):
+        g = np.asarray(g_mat, dtype=np.complex128)
+        if g.shape != (n_spin, n_spin):
+            raise ValueError("G matrix shape is incompatible with model.N.")
+
+        g_alpha = g[0::2, 0::2]
+        g_beta = g[1::2, 1::2]
+        g_ab = g[0::2, 1::2]
+        g_ba = g[1::2, 0::2]
+        g_scale = max(
+            1.0, float(np.linalg.norm(g_alpha)), float(np.linalg.norm(g_beta))
+        )
+        g_spin_break = max(
+            float(np.linalg.norm(g_ab)),
+            float(np.linalg.norm(g_ba)),
+            float(np.linalg.norm(g_alpha - g_beta)),
+        )
+        if g_spin_break > spin_tol * g_scale:
+            raise ValueError(
+                "DF two-body factor breaks spin-restricted structure "
+                "(alpha/beta mismatch or alpha-beta coupling is too large)."
+            )
+        two_body_chemist += complex(lam) * np.einsum("pq,rs->pqrs", g, g, optimize=True)
+
+    interaction = interaction_operator_from_chemist_integrals(
+        constant + model.constant_correction,
+        h1_in,
+        two_body_chemist,
+    )
+
+    h1_spin = np.asarray(interaction.one_body_tensor, dtype=np.complex128)
+    h2_spin = np.asarray(interaction.two_body_tensor, dtype=np.complex128)
+    h_alpha = h1_spin[0::2, 0::2]
+    h_beta = h1_spin[1::2, 1::2]
+    h_ab = h1_spin[0::2, 1::2]
+    h_ba = h1_spin[1::2, 0::2]
+    h_scale = max(1.0, float(np.linalg.norm(h_alpha)), float(np.linalg.norm(h_beta)))
+    h_spin_break = max(
+        float(np.linalg.norm(h_ab)),
+        float(np.linalg.norm(h_ba)),
+        float(np.linalg.norm(h_alpha - h_beta)),
+    )
+    if h_spin_break > spin_tol * h_scale:
+        raise ValueError(
+            "Normal-ordered DF one-body term breaks spin-restricted structure."
+        )
+
+    h2_aa = h2_spin[0::2, 0::2, 0::2, 0::2]
+    h2_bb = h2_spin[1::2, 1::2, 1::2, 1::2]
+    h2_scale = max(1.0, float(np.linalg.norm(h2_aa)), float(np.linalg.norm(h2_bb)))
+    h2_spin_break = float(np.linalg.norm(h2_aa - h2_bb))
+    if h2_spin_break > spin_tol * h2_scale:
+        raise ValueError(
+            "Normal-ordered DF two-body term breaks spin-restricted structure."
+        )
+
+    h1_spatial = 0.5 * (h_alpha + h_beta)
+    # OpenFermion spin-orbital tensor stores half-scaled spatial ERI on aa/bb blocks.
+    two_spatial_of = 2.0 * (0.5 * (h2_aa + h2_bb))
+    # PySCF direct_spin1 expects chemist ERI in (pq|rs) ordering.
+    eri_pyscf = np.transpose(two_spatial_of, (0, 3, 1, 2))
+
+    h1_real = _real_if_small_imag(h1_spatial, name="h1_df_spatial", tol=imag_tol)
+    eri_real = _real_if_small_imag(eri_pyscf, name="eri_df_spatial", tol=imag_tol)
+    ecore_complex = complex(interaction.constant)
+    if abs(ecore_complex.imag) > imag_tol:
+        raise ValueError("DF ecore has non-negligible imaginary part.")
+    return h1_real, eri_real, float(ecore_complex.real)
+
+
+def _fci_vector_from_ci_matrix_interleaved(
+    ci_matrix: np.ndarray,
+    *,
+    n_orbitals: int,
+    nelec_alpha: int,
+    nelec_beta: int,
+) -> np.ndarray:
+    n_qubits = n_orbitals * 2
+    state_vec = np.zeros(2**n_qubits, dtype=np.complex128)
+    ci_strings_alpha = cistring.make_strings(range(n_orbitals), nelec_alpha)
+    ci_strings_beta = cistring.make_strings(range(n_orbitals), nelec_beta)
+
+    for i, a_str in enumerate(ci_strings_alpha):
+        a_bits = format(a_str, f"0{n_orbitals}b")[::-1]
+        for j, b_str in enumerate(ci_strings_beta):
+            b_bits = format(b_str, f"0{n_orbitals}b")[::-1]
+
+            interleaved_bits = []
+            for bit_a, bit_b in zip(a_bits, b_bits):
+                interleaved_bits.append(bit_b)
+                interleaved_bits.append(bit_a)
+
+            sign = 1
+            for k in range(n_orbitals):
+                if a_bits[k] == "1":
+                    for l in range(k + 1, n_orbitals):
+                        if b_bits[l] == "1":
+                            sign *= -1
+
+            bitstring = "".join(interleaved_bits)
+            state_vec[int(bitstring, 2)] = sign * ci_matrix[i, j]
+
+    return state_vec
+
+
+def _ground_state_from_df_integrals_fci(
+    molecule_type: int,
+    *,
+    distance: float | None,
+    basis: str | None,
+    constant: float,
+    one_body_spin: np.ndarray,
+    model: DFModel,
+) -> tuple[float, np.ndarray]:
+    mol = _build_pyscf_molecule(molecule_type, distance=distance, basis=basis)
+    h1_df_spatial, eri_df_spatial, ecore_df = _df_pyscf_integrals_from_model(
+        constant,
+        one_body_spin,
+        model,
+    )
+    norb = int(h1_df_spatial.shape[0])
+    nelec = mol.nelec
+
+    energy, ci_matrix = fci.direct_spin1.kernel(
+        h1_df_spatial,
+        eri_df_spatial,
+        norb,
+        nelec,
+        ecore=ecore_df,
+    )
+    nelec_alpha, nelec_beta = int(nelec[0]), int(nelec[1])
+    state_vec = _fci_vector_from_ci_matrix_interleaved(
+        np.asarray(ci_matrix),
+        n_orbitals=norb,
+        nelec_alpha=nelec_alpha,
+        nelec_beta=nelec_beta,
+    )
+    return float(np.real_if_close(energy)), state_vec
 
 
 def _artifact_ham_name(
@@ -830,7 +1023,7 @@ def _run_sanity_checks(
     if g_nonherm:
         max_nonherm = float(np.max(g_nonherm))
         max_norm = float(np.max(g_norms)) if g_norms else 1.0
-        if reference != "df" and max_nonherm > 1e-8 * max(1.0, max_norm):
+        if not _is_df_reference(reference) and max_nonherm > 1e-8 * max(1.0, max_norm):
             warnings.append(
                 f"G_list not Hermitian (max ||G-G†||={max_nonherm:.3e})."
             )
@@ -920,7 +1113,7 @@ def _run_sanity_checks(
         )
 
     # DF reconstruction consistency (small systems only).
-    if one_body_spin.size and model.N <= 8 and reference != "df":
+    if one_body_spin.size and model.N <= 8 and not _is_df_reference(reference):
         h_exact = _hamiltonian_matrix(constant, one_body_spin, two_body_spin)
         h_df = _hamiltonian_matrix_from_df_model(constant, one_body_spin, model)
         diff = np.linalg.norm(h_exact - h_df)
@@ -957,7 +1150,7 @@ def _run_sanity_checks(
             )
 
     # Sparse reconstruction consistency (moderate systems).
-    if one_body_spin.size and model.N <= 12 and reference != "df":
+    if one_body_spin.size and model.N <= 12 and not _is_df_reference(reference):
         try:
             h_exact_sparse = get_sparse_operator(
                 InteractionOperator(constant, one_body_spin, two_body_spin),
@@ -1036,14 +1229,14 @@ def _run_sanity_checks(
         if t_check != 0.0:
             e_phase = -np.angle(s) / t_check
             dE_phase = e_phase - float(energy_ref)
-            if reference == "df" and abs(dE_phase) > 1e-3:
+            if _is_df_reference(reference) and abs(dE_phase) > 1e-3:
                 warnings.append(
                     f"phase mismatch vs DF reference (dE_phase={dE_phase:+.3e})."
                 )
             if reference == "exact" and not full_rank:
                 warnings.append(
                     "reference='exact' with DF truncation: phase mismatch expected; "
-                    "use reference='df' to isolate Trotter error."
+                    "use reference='df' or 'df_fci' to isolate Trotter error."
                 )
         if model.N <= 6:
             h_df = _hamiltonian_matrix_from_df_model(constant, one_body_spin, model)
@@ -1121,10 +1314,11 @@ def _run_debug_diagnostics(
         f"herm ||one_body-one_body†||={herm_stats['one_body_nonherm']:.3e} "
         f"herm max|Im(lambda)|={herm_stats['lam_max_imag']:.3e}"
     )
-    if reference == "df":
+    if _is_df_reference(reference):
         energy_ref_val = float(energy_ref) if energy_ref is not None else float("nan")
+        ref_label = "df_fci reference" if reference == "df_fci" else "df reference"
         debug_print(
-            "df reference: "
+            f"{ref_label}: "
             f"constant={constant:.6e} "
             f"constant_correction={model.constant_correction:.6e} "
             f"one_body_correction_norm={np.linalg.norm(model.one_body_correction):.3e} "
@@ -1240,6 +1434,67 @@ def _debug_rz_count(
     debug_print(f"ref_rz_count={_count_rz_gates(qc)}")
 
 
+def _debug_error_scaling(
+    *,
+    times: Sequence[float],
+    errors: Sequence[float],
+    pf_label: PFLabel,
+    debug_print: Callable[[str], None],
+    debug_max: int | None = 8,
+) -> None:
+    t_arr = np.asarray(times, dtype=float)
+    e_arr = np.asarray(errors, dtype=float)
+    valid = np.isfinite(t_arr) & np.isfinite(e_arr) & (t_arr > 0.0) & (e_arr > 0.0)
+    valid_count = int(np.count_nonzero(valid))
+    if valid_count < 2:
+        debug_print(
+            "scaling diagnostics skipped: need at least 2 positive finite points "
+            f"(got {valid_count})."
+        )
+        return
+
+    tv = t_arr[valid]
+    ev = e_arr[valid]
+    p_target = float(pf_order(pf_label))
+    ratio = ev / np.power(tv, p_target)
+    log_t = np.log(tv)
+    log_e = np.log(ev)
+    local_slopes = np.diff(log_e) / np.diff(log_t)
+
+    debug_print(
+        "scaling diagnostics: "
+        f"p_target={p_target:.1f} "
+        f"points={len(tv)} "
+        f"t=[{float(tv[0]):.6e},{float(tv[-1]):.6e}]"
+    )
+    debug_print(
+        "scaling diagnostics: "
+        f"err=[{float(np.min(ev)):.6e},{float(np.max(ev)):.6e}] "
+        f"err/t^p median={float(np.median(ratio)):.6e} "
+        f"spread={float(np.max(ratio) / max(np.min(ratio), 1e-300)):.3e}"
+    )
+    debug_print(
+        "scaling diagnostics: "
+        f"local slope min/median/max="
+        f"{float(np.min(local_slopes)):.4f}/"
+        f"{float(np.median(local_slopes)):.4f}/"
+        f"{float(np.max(local_slopes)):.4f}"
+    )
+
+    if debug_max is None:
+        limit = min(8, len(local_slopes))
+    else:
+        limit = max(0, min(int(debug_max), len(local_slopes)))
+    for idx in range(limit):
+        debug_print(
+            "scaling local: "
+            f"i={idx} "
+            f"t=({float(tv[idx]):.6e}->{float(tv[idx + 1]):.6e}) "
+            f"e=({float(ev[idx]):.6e}->{float(ev[idx + 1]):.6e}) "
+            f"p_local={float(local_slopes[idx]):.6f}"
+        )
+
+
 def _debug_perturbation_step(
     *,
     t_sim: float,
@@ -1351,6 +1606,40 @@ def df_trotter_energy_error_curve(
     ccsd_use_kernel: bool = False,
     ccsd_no_triples: bool = False,
 ) -> tuple[list[float], list[float]] | tuple[list[float], list[float], dict[str, object]]:
+    from scripts.df_trotter_energy_plot import (
+        df_trotter_energy_error_curve as _df_trotter_energy_error_curve,
+    )
+
+    # Keep helpers in sync with the maintained implementation used by notebooks.
+    return _df_trotter_energy_error_curve(
+        t_start,
+        t_end,
+        t_step,
+        molecule_type=molecule_type,
+        pf_label=pf_label,
+        rank=rank,
+        rank_fraction=rank_fraction,
+        tol=tol,
+        distance=distance,
+        basis=basis,
+        estimator=estimator,
+        reference=reference,
+        debug=debug,
+        debug_every=debug_every,
+        debug_max=debug_max,
+        debug_print=debug_print,
+        debug_compare_expectation=debug_compare_expectation,
+        return_costs=return_costs,
+        cost_basis_gates=cost_basis_gates,
+        cost_decompose_reps=cost_decompose_reps,
+        cost_optimization_level=cost_optimization_level,
+        trace_u_debug=trace_u_debug,
+        ccsd_target_error_ha=ccsd_target_error_ha,
+        ccsd_thresh_range=ccsd_thresh_range,
+        ccsd_use_kernel=ccsd_use_kernel,
+        ccsd_no_triples=ccsd_no_triples,
+    )
+
     pf_label = normalize_pf_label(pf_label)
     if t_step <= 0:
         raise ValueError("t_step must be positive.")
@@ -1360,10 +1649,12 @@ def df_trotter_energy_error_curve(
         raise ValueError(
             "estimator must be 'perturbation', 'expectation', or 'eigenphase'."
         )
-    if reference not in ("exact", "df"):
-        raise ValueError("reference must be 'exact' or 'df'.")
-    if estimator == "expectation" and reference not in ("exact", "df"):
-        raise ValueError("reference must be 'exact' or 'df' for expectation estimator.")
+    if reference not in ("exact", "df", "df_fci"):
+        raise ValueError("reference must be 'exact', 'df', or 'df_fci'.")
+    if estimator == "expectation" and reference not in ("exact", "df", "df_fci"):
+        raise ValueError(
+            "reference must be 'exact', 'df', or 'df_fci' for expectation estimator."
+        )
     if rank is None and rank_fraction is None and ccsd_target_error_ha is None:
         config_rank_fraction = get_df_rank_fraction_for_molecule(int(molecule_type))
         if config_rank_fraction is not None:
@@ -1727,11 +2018,44 @@ def df_trotter_energy_error_curve(
                 state_vec = psi0.reshape(-1, 1)
                 h_ref = _reorder_matrix(h_exact_open, perm)
 
-    if reference == "df":
+    if _is_df_reference(reference):
         h_df_sparse = _effective_df_hamiltonian_sparse(
             constant, one_body_spin, model
         )
-        energy_ref, psi0 = _ground_state_from_sparse(h_df_sparse)
+        energy_sparse_ref, psi_sparse_ref = _ground_state_from_sparse(h_df_sparse)
+        if reference == "df":
+            energy_ref, psi0 = energy_sparse_ref, psi_sparse_ref
+        else:
+            use_sparse_fallback = False
+            fallback_reason = ""
+            try:
+                energy_fci_ref, psi_fci_ref = _ground_state_from_df_integrals_fci(
+                    molecule_type,
+                    distance=distance,
+                    basis=basis,
+                    constant=constant,
+                    one_body_spin=one_body_spin,
+                    model=model,
+                )
+                ref_mismatch = abs(float(energy_fci_ref) - float(energy_sparse_ref))
+                if ref_mismatch > 1e-6:
+                    use_sparse_fallback = True
+                    fallback_reason = (
+                        f"energy mismatch vs sparse DF reference (|dE|={ref_mismatch:.3e})"
+                    )
+                else:
+                    energy_ref, psi0 = energy_fci_ref, psi_fci_ref
+            except Exception as exc:
+                use_sparse_fallback = True
+                fallback_reason = f"df_fci reference build failed ({exc})"
+
+            if use_sparse_fallback:
+                energy_ref, psi0 = energy_sparse_ref, psi_sparse_ref
+                if debug:
+                    debug_print(
+                        "df_fci fallback -> sparse DF reference: "
+                        f"{fallback_reason}"
+                    )
         psi0 = _reorder_vector(np.asarray(psi0).reshape(-1), perm)
         state_vec = psi0.reshape(-1, 1)
         if estimator == "expectation":
@@ -1778,7 +2102,7 @@ def df_trotter_energy_error_curve(
             debug_print=debug_print,
         )
 
-    if reference == "df" and phase_energy_ref is not None:
+    if _is_df_reference(reference) and phase_energy_ref is not None:
         energy_ref_eff = float(phase_energy_ref)
     else:
         energy_ref_eff = float(energy_ref) if energy_ref is not None else 0.0
@@ -1817,6 +2141,14 @@ def df_trotter_energy_error_curve(
                     )
                     debug_print(msg)
                     debug_count += 1
+        if debug:
+            _debug_error_scaling(
+                times=times,
+                errors=errors,
+                pf_label=pf_label,
+                debug_print=debug_print,
+                debug_max=debug_max,
+            )
         if return_costs:
             return times, errors, rz_costs or {}
         return times, errors
@@ -1836,6 +2168,14 @@ def df_trotter_energy_error_curve(
         times_out, error_list = error_cal_multi(
             times, unitaries, state_vec, float(energy_ref), num_eig=1  # type: ignore[arg-type]
         )
+        if debug:
+            _debug_error_scaling(
+                times=times_out,
+                errors=error_list,
+                pf_label=pf_label,
+                debug_print=debug_print,
+                debug_max=debug_max,
+            )
         if return_costs:
             return times_out, error_list, rz_costs or {}
         return times_out, error_list
@@ -1853,6 +2193,14 @@ def df_trotter_energy_error_curve(
         energy_est = np.vdot(psi_t, h_ref @ psi_t).real  # type: ignore[operator]
         errors.append(float(abs(energy_est - float(energy_ref))))
 
+    if debug:
+        _debug_error_scaling(
+            times=times,
+            errors=errors,
+            pf_label=pf_label,
+            debug_print=debug_print,
+            debug_max=debug_max,
+        )
     if return_costs:
         return times, errors, rz_costs or {}
     return times, errors
@@ -1891,6 +2239,44 @@ def df_trotter_energy_error_plot(
     save_fit_params: bool = False,
     save_rz_layers: bool = False,
 ) -> tuple[list[float], list[float]] | tuple[list[float], list[float], dict[str, object]]:
+    from scripts.df_trotter_energy_plot import (
+        df_trotter_energy_error_plot as _df_trotter_energy_error_plot,
+    )
+
+    # Keep helpers in sync with the maintained implementation used by notebooks.
+    return _df_trotter_energy_error_plot(
+        t_start,
+        t_end,
+        t_step,
+        molecule_type=molecule_type,
+        pf_label=pf_label,
+        rank=rank,
+        rank_fraction=rank_fraction,
+        tol=tol,
+        distance=distance,
+        basis=basis,
+        estimator=estimator,
+        reference=reference,
+        fit=fit,
+        debug=debug,
+        debug_every=debug_every,
+        debug_max=debug_max,
+        debug_print=debug_print,
+        debug_compare_expectation=debug_compare_expectation,
+        report_costs=report_costs,
+        return_costs=return_costs,
+        cost_basis_gates=cost_basis_gates,
+        cost_decompose_reps=cost_decompose_reps,
+        cost_optimization_level=cost_optimization_level,
+        trace_u_debug=trace_u_debug,
+        ccsd_target_error_ha=ccsd_target_error_ha,
+        ccsd_thresh_range=ccsd_thresh_range,
+        ccsd_use_kernel=ccsd_use_kernel,
+        ccsd_no_triples=ccsd_no_triples,
+        save_fit_params=save_fit_params,
+        save_rz_layers=save_rz_layers,
+    )
+
     compute_costs_by_default = True
     result = df_trotter_energy_error_curve(
         t_start,

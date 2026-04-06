@@ -64,6 +64,11 @@ def test_df_trotter_ud_rz_layer_counts_splits_u_and_d(monkeypatch) -> None:
                 "total_nonclifford_rz_count": 10,
                 "total_nonclifford_rz_depth": 7,
             },
+            "toffoli_proxy_total_coloring": {
+                "u_nonclifford_z_depth": 11,
+                "d_nonclifford_z_depth": 13,
+                "total_nonclifford_z_depth": 24,
+            },
             "u_costs": [
                 {
                     "label": "one_body",
@@ -98,6 +103,9 @@ def test_df_trotter_ud_rz_layer_counts_splits_u_and_d(monkeypatch) -> None:
     assert metrics["u_nonclifford_rz_depth"] == 3
     assert metrics["d_nonclifford_rz_depth"] == 4
     assert metrics["total_nonclifford_rz_depth"] == 7
+    assert metrics["u_nonclifford_z_coloring_depth"] == 11
+    assert metrics["d_nonclifford_z_coloring_depth"] == 13
+    assert metrics["total_nonclifford_z_coloring_depth"] == 24
 
     u_block_costs = metrics.get("u_block_costs")
     assert isinstance(u_block_costs, list)
@@ -347,7 +355,12 @@ def test_df_trotter_ud_rz_layer_counts_can_save_artifact(
         df_plot,
         "_compute_df_rz_costs",
         lambda **kwargs: {
-            "rz_total_ud": {"u_rz_depth": 2, "d_rz_depth": 3, "total_rz_depth": 5}
+            "rz_total_ud": {"u_rz_depth": 2, "d_rz_depth": 3, "total_rz_depth": 5},
+            "toffoli_proxy_total_coloring": {
+                "u_nonclifford_z_depth": 17,
+                "d_nonclifford_z_depth": 19,
+                "total_nonclifford_z_depth": 36,
+            },
         },
     )
 
@@ -365,6 +378,7 @@ def test_df_trotter_ud_rz_layer_counts_can_save_artifact(
         saved = pickle.load(f)
     assert saved["u_rz_depth"] == 2
     assert saved["d_rz_depth"] == 3
+    assert saved["total_nonclifford_z_coloring_depth"] == 36
     assert saved["num_qubits"] == 2
 
 
@@ -383,12 +397,18 @@ def test_plot_df_u_rz_depth_vs_num_qubits_reads_saved_layers(
         "u_rz_depth": 10,
         "d_rz_depth": 8,
         "total_rz_depth": 20,
+        "u_nonclifford_rz_depth": 6,
+        "d_nonclifford_rz_depth": 4,
+        "total_nonclifford_rz_depth": 10,
     }
     data_h3 = {
         "num_qubits": 6,
         "u_rz_depth": 30,
         "d_rz_depth": 24,
         "total_rz_depth": 60,
+        "u_nonclifford_rz_depth": 18,
+        "d_nonclifford_rz_depth": 12,
+        "total_nonclifford_rz_depth": 30,
     }
     with (tmp_path / "H2_mock_Operator_2nd").open("wb") as f:
         pickle.dump(data_h2, f)
@@ -406,3 +426,116 @@ def test_plot_df_u_rz_depth_vs_num_qubits_reads_saved_layers(
     assert out["d_rz_depth"] == [8.0, 24.0]
     assert out["total_rz_depth"] == [20.0, 60.0]
     assert len(out["pf_rz_depth"]) == 2
+
+
+def test_plot_df_u_rz_depth_vs_num_qubits_nonclifford_mode(
+    monkeypatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(df_plot, "PICKLE_DIR_DF_RZ_LAYER_PATH", tmp_path)
+    monkeypatch.setattr(
+        df_plot,
+        "_artifact_ham_name",
+        lambda molecule_type, *, distance, basis: f"H{int(molecule_type)}_mock",
+    )
+
+    data_h2 = {
+        "num_qubits": 4,
+        "u_rz_depth": 100,
+        "d_rz_depth": 80,
+        "total_rz_depth": 200,
+        "u_nonclifford_rz_depth": 10,
+        "d_nonclifford_rz_depth": 8,
+        "total_nonclifford_rz_depth": 20,
+    }
+    data_h3 = {
+        "num_qubits": 6,
+        "u_rz_depth": 300,
+        "d_rz_depth": 240,
+        "total_rz_depth": 600,
+        "u_nonclifford_rz_depth": 30,
+        "d_nonclifford_rz_depth": 24,
+        "total_nonclifford_rz_depth": 60,
+    }
+    with (tmp_path / "H2_mock_Operator_2nd").open("wb") as f:
+        pickle.dump(data_h2, f)
+    with (tmp_path / "H3_mock_Operator_2nd").open("wb") as f:
+        pickle.dump(data_h3, f)
+
+    out = df_plot.plot_df_u_rz_depth_vs_num_qubits(
+        molecule_types=[3, 2],
+        pf_label="2nd",
+        show=False,
+        include_pf_rz_layer=False,
+        use_nonclifford_rz_depth=True,
+    )
+    assert out["num_qubits"] == [4.0, 6.0]
+    assert out["u_rz_depth"] == [10.0, 30.0]
+    assert out["d_rz_depth"] == [8.0, 24.0]
+    assert out["total_rz_depth"] == [20.0, 60.0]
+
+
+def test_plot_df_u_rz_depth_vs_num_qubits_nonclifford_coloring_mode(
+    monkeypatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(df_plot, "PICKLE_DIR_DF_RZ_LAYER_PATH", tmp_path)
+    monkeypatch.setattr(
+        df_plot,
+        "_artifact_ham_name",
+        lambda molecule_type, *, distance, basis: f"H{int(molecule_type)}_mock",
+    )
+
+    data_h2 = {
+        "num_qubits": 4,
+        "u_nonclifford_z_coloring_depth": 11,
+        "d_nonclifford_z_coloring_depth": 9,
+        "total_nonclifford_z_coloring_depth": 20,
+    }
+    data_h3 = {
+        "num_qubits": 6,
+        "u_nonclifford_z_coloring_depth": 33,
+        "d_nonclifford_z_coloring_depth": 27,
+        "total_nonclifford_z_coloring_depth": 60,
+    }
+    with (tmp_path / "H2_mock_Operator_2nd").open("wb") as f:
+        pickle.dump(data_h2, f)
+    with (tmp_path / "H3_mock_Operator_2nd").open("wb") as f:
+        pickle.dump(data_h3, f)
+
+    out = df_plot.plot_df_u_rz_depth_vs_num_qubits(
+        molecule_types=[3, 2],
+        pf_label="2nd",
+        show=False,
+        include_pf_rz_layer=False,
+        use_nonclifford_z_coloring_depth=True,
+    )
+    assert out["num_qubits"] == [4.0, 6.0]
+    assert out["u_rz_depth"] == [11.0, 33.0]
+    assert out["d_rz_depth"] == [9.0, 27.0]
+    assert out["total_rz_depth"] == [20.0, 60.0]
+
+
+def test_plot_df_u_rz_depth_vs_num_qubits_conflicting_modes_raises(
+    monkeypatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(df_plot, "PICKLE_DIR_DF_RZ_LAYER_PATH", tmp_path)
+    monkeypatch.setattr(
+        df_plot,
+        "_artifact_ham_name",
+        lambda molecule_type, *, distance, basis: f"H{int(molecule_type)}_mock",
+    )
+
+    with (tmp_path / "H2_mock_Operator_2nd").open("wb") as f:
+        pickle.dump({"num_qubits": 4}, f)
+
+    try:
+        _ = df_plot.plot_df_u_rz_depth_vs_num_qubits(
+            molecule_types=[2],
+            pf_label="2nd",
+            show=False,
+            include_pf_rz_layer=False,
+            use_nonclifford_rz_depth=True,
+            use_nonclifford_z_coloring_depth=True,
+        )
+        assert False, "expected ValueError"
+    except ValueError as exc:
+        assert "cannot both be True" in str(exc)

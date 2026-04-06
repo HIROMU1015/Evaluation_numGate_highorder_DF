@@ -1059,16 +1059,23 @@ def _pick_df_rz_layer_value(
     rz_layers: Mapping[str, Any],
     preferred_key: str | None = None,
 ) -> Tuple[str, float]:
-    """DF artifact の rz_layers から利用するレイヤー値を選ぶ。"""
+    """DF artifact の rz_layers から利用するレイヤー値を選ぶ。
+
+    Default priority prefers full reference RZ depth:
+      total_ref_rz_depth > ref_rz_depth > (legacy/nonclifford keys...)
+    """
     candidate_keys: List[str] = []
     if preferred_key:
         candidate_keys.append(str(preferred_key))
     candidate_keys.extend(
         [
+            "total_ref_rz_depth",
+            "ref_rz_depth",
+            "u_ref_rz_depth",
+            "d_ref_rz_depth",
             "total_nonclifford_z_coloring_depth",
             "total_nonclifford_z_depth",
             "total_nonclifford_rz_depth",
-            "ref_rz_depth",
         ]
     )
     for key in candidate_keys:
@@ -1095,7 +1102,10 @@ def t_depth_extrapolation_df(
     band_alpha: float = 0.28,
     rz_layer_key: str | None = None,
 ) -> None:
-    """DF の保存データ(trotter_expo_coeff_df)を使って T-depth / RZ レイヤー数を外挿する。"""
+    """DF の保存データ(trotter_expo_coeff_df)を使って T-depth / RZ レイヤー数を外挿する。
+
+    rz_layer_key=None の既定では DF 側レイヤーは total_ref_rz_depth を優先する。
+    """
     if Hchain < 3:
         raise ValueError("Hchain must be >= 3 for t_depth_extrapolation_df.")
 
@@ -1222,6 +1232,7 @@ def t_depth_extrapolation_compare_gr_df(
 
     Default:
       alpha は *_ave から、p は固定の P_DIR[pf_label] を使う。
+      DF の rz layer は total_nonclifford_z_coloring_depth を優先して選ぶ。
     Fallback:
       *_ave が無い場合は従来読込に戻る（df は legacy expo を使用）。
     """
@@ -1235,6 +1246,11 @@ def t_depth_extrapolation_compare_gr_df(
 
     series: DefaultDict[str, Dict[str, List[float]]] = defaultdict(
         lambda: {"x": [], "y": []}
+    )
+    effective_rz_layer_key = (
+        rz_layer_key
+        if rz_layer_key is not None
+        else "total_nonclifford_z_coloring_depth"
     )
 
     for qubits, mol in zip(num_qubits, mol_labels):
@@ -1294,7 +1310,7 @@ def t_depth_extrapolation_compare_gr_df(
                 if not isinstance(rz_layers_raw, Mapping):
                     raise ValueError("missing rz_layers")
                 _metric_key, rz_layer_value = _pick_df_rz_layer_value(
-                    rz_layers_raw, preferred_key=rz_layer_key
+                    rz_layers_raw, preferred_key=effective_rz_layer_key
                 )
                 N_0_df = rz_layer_value
                 pf_layer_rz_df = rz_layer_value
