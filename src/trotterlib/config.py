@@ -34,6 +34,7 @@ PICKLE_DIR = "trotter_expo_coeff"          # :contentReference[oaicite:2]{index=
 PICKLE_DIR_GROUPED = "trotter_expo_coeff_gr"  # :contentReference[oaicite:3]{index=3}
 PICKLE_DIR_GROUPED_ORIGINAL = "trotter_expo_coeff_gr_original"
 PICKLE_DIR_DF = "trotter_expo_coeff_df"
+PICKLE_DIR_DF_GROUND_STATE = "df_ground_state"
 PICKLE_DIR_DF_RZ_LAYER = "df_rz_layer"
 
 # 実際に使う Path（ここを保存/読込の基準にする）
@@ -41,6 +42,7 @@ PICKLE_DIR_PATH = ARTIFACTS_DIR / PICKLE_DIR
 PICKLE_DIR_GROUPED_PATH = ARTIFACTS_DIR / PICKLE_DIR_GROUPED
 PICKLE_DIR_GROUPED_ORIGINAL_PATH = ARTIFACTS_DIR / PICKLE_DIR_GROUPED_ORIGINAL
 PICKLE_DIR_DF_PATH = ARTIFACTS_DIR / PICKLE_DIR_DF
+PICKLE_DIR_DF_GROUND_STATE_PATH = ARTIFACTS_DIR / PICKLE_DIR_DF_GROUND_STATE
 PICKLE_DIR_DF_RZ_LAYER_PATH = ARTIFACTS_DIR / PICKLE_DIR_DF_RZ_LAYER
 
 # もし matrix/ calculation/ も同じ階層に寄せたいなら
@@ -57,6 +59,7 @@ def ensure_artifact_dirs(*, include_pickle_dirs: bool = True) -> None:
                 PICKLE_DIR_PATH,
                 PICKLE_DIR_GROUPED_PATH,
                 PICKLE_DIR_DF_PATH,
+                PICKLE_DIR_DF_GROUND_STATE_PATH,
                 PICKLE_DIR_DF_RZ_LAYER_PATH,
             ]
         )

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import itertools
 import pickle
 from pathlib import Path
+from time import perf_counter
 from typing import Any, Callable, Iterable, Sequence
 
 import numpy as np
@@ -10,11 +12,16 @@ import matplotlib.pyplot as plt
 from qiskit import QuantumCircuit
 from openfermion import FermionOperator, InteractionOperator
 from openfermion.chem.molecular_data import spinorb_from_spatial
-from openfermion.linalg import get_sparse_operator, jw_sz_indices
+from openfermion.linalg import (
+    get_number_preserving_sparse_operator,
+    get_sparse_operator,
+    jw_sz_indices,
+)
 from openfermionpyscf import run_pyscf
 from openfermion.chem import MolecularData
 from openfermion.transforms import get_interaction_operator
-from scipy.sparse.linalg import eigsh
+import scipy.sparse as sp
+from scipy.sparse.linalg import LinearOperator, eigsh
 from pyscf import fci, gto
 from pyscf.fci import cistring
 
@@ -27,6 +34,7 @@ from trotterlib.config import (
     PFLabel,
     PF_RZ_LAYER,
     PICKLE_DIR_DF_PATH,
+    PICKLE_DIR_DF_GROUND_STATE_PATH,
     PICKLE_DIR_DF_RZ_LAYER_PATH,
     get_default_df_time_for_molecule_pf,
     get_df_rank_fraction_for_molecule,
@@ -84,6 +92,117 @@ def _one_body_fermion_op(coeff_mat: np.ndarray) -> FermionOperator:
                 continue
             op += FermionOperator(((p, 1), (q, 0)), coeff)
     return op
+
+
+def _physical_sector_reference_determinant(
+    *,
+    nelec_alpha: int,
+    nelec_beta: int,
+    n_qubits: int,
+) -> np.ndarray:
+    ref = np.zeros(n_qubits, dtype=bool)
+    ref[: 2 * nelec_alpha : 2] = True
+    ref[1 : 2 * nelec_beta + 1 : 2] = True
+    return ref
+
+
+def _iterate_basis_order_from_reference(
+    reference_determinant: np.ndarray,
+    order: int,
+) -> Iterable[np.ndarray]:
+    occupied_indices = np.where(reference_determinant)[0]
+    unoccupied_indices = np.where(~reference_determinant)[0]
+
+    for occ_ind in itertools.combinations(occupied_indices, order):
+        for unocc_ind in itertools.combinations(unoccupied_indices, order):
+            basis_state = reference_determinant.copy()
+            basis_state[list(occ_ind)] = False
+            basis_state[list(unocc_ind)] = True
+            yield basis_state
+
+
+def _iterate_basis_spin_order_from_reference(
+    reference_determinant: np.ndarray,
+    alpha_order: int,
+    beta_order: int,
+) -> Iterable[np.ndarray]:
+    occupied_alpha_indices = np.where(reference_determinant[::2])[0] * 2
+    unoccupied_alpha_indices = np.where(~reference_determinant[::2])[0] * 2
+    occupied_beta_indices = np.where(reference_determinant[1::2])[0] * 2 + 1
+    unoccupied_beta_indices = np.where(~reference_determinant[1::2])[0] * 2 + 1
+
+    for alpha_occ_ind in itertools.combinations(
+        occupied_alpha_indices, alpha_order
+    ):
+        for alpha_unocc_ind in itertools.combinations(
+            unoccupied_alpha_indices, alpha_order
+        ):
+            for beta_occ_ind in itertools.combinations(
+                occupied_beta_indices, beta_order
+            ):
+                for beta_unocc_ind in itertools.combinations(
+                    unoccupied_beta_indices, beta_order
+                ):
+                    basis_state = reference_determinant.copy()
+                    basis_state[list(alpha_occ_ind)] = False
+                    basis_state[list(alpha_unocc_ind)] = True
+                    basis_state[list(beta_occ_ind)] = False
+                    basis_state[list(beta_unocc_ind)] = True
+                    yield basis_state
+
+
+def _iterate_sector_basis_states(
+    reference_determinant: np.ndarray,
+    *,
+    excitation_level: int,
+    spin_preserving: bool,
+) -> Iterable[np.ndarray]:
+    if not spin_preserving:
+        for order in range(excitation_level + 1):
+            yield from _iterate_basis_order_from_reference(reference_determinant, order)
+        return
+
+    alpha_excitation_level = min(
+        int(np.sum(reference_determinant[::2])),
+        int(excitation_level),
+    )
+    beta_excitation_level = min(
+        int(np.sum(reference_determinant[1::2])),
+        int(excitation_level),
+    )
+    for order in range(excitation_level + 1):
+        for alpha_order in range(alpha_excitation_level + 1):
+            beta_order = order - alpha_order
+            if beta_order < 0 or beta_order > beta_excitation_level:
+                continue
+            yield from _iterate_basis_spin_order_from_reference(
+                reference_determinant,
+                alpha_order,
+                beta_order,
+            )
+
+
+def _sector_basis_indices_from_reference(
+    reference_determinant: np.ndarray,
+    *,
+    excitation_level: int | None = None,
+    spin_preserving: bool = True,
+) -> np.ndarray:
+    if excitation_level is None:
+        excitation_level = int(np.sum(reference_determinant))
+
+    basis_states = list(
+        _iterate_sector_basis_states(
+            reference_determinant,
+            excitation_level=int(excitation_level),
+            spin_preserving=spin_preserving,
+        )
+    )
+    weights = 1 << np.arange(reference_determinant.size - 1, -1, -1)
+    return np.asarray(
+        [int(np.dot(state.astype(int), weights)) for state in basis_states],
+        dtype=int,
+    )
 
 
 def _one_body_matrix(coeff_mat: np.ndarray) -> np.ndarray:
@@ -162,6 +281,14 @@ def _hamiltonian_matrix(
 def _effective_df_hamiltonian_sparse(
     constant: float, one_body_spin: np.ndarray, model: DFModel
 ):
+    total_op = _effective_df_hamiltonian_fermion_operator(constant, one_body_spin, model)
+    interaction_op = get_interaction_operator(total_op)
+    return get_sparse_operator(interaction_op, n_qubits=model.N)
+
+
+def _effective_df_hamiltonian_fermion_operator(
+    constant: float, one_body_spin: np.ndarray, model: DFModel
+) -> FermionOperator:
     h_eff = one_body_spin + model.one_body_correction
     u_one, eps = diag_hermitian(h_eff, assume_hermitian=True)
     herm_one_body = u_one @ np.diag(eps) @ u_one.conj().T
@@ -172,8 +299,54 @@ def _effective_df_hamiltonian_sparse(
         g_herm = u_g @ np.diag(eta) @ u_g.conj().T
         a_op = _one_body_fermion_op(g_herm)
         total_op += lam * (a_op * a_op)
-    interaction_op = get_interaction_operator(total_op)
-    return get_sparse_operator(interaction_op, n_qubits=model.N)
+    return total_op
+
+
+def _effective_df_hamiltonian_sector_sparse(
+    constant: float,
+    one_body_spin: np.ndarray,
+    model: DFModel,
+    *,
+    nelec_alpha: int,
+    nelec_beta: int,
+    timings: dict[str, float] | None = None,
+) -> tuple[Any, np.ndarray, np.ndarray]:
+    t0 = perf_counter()
+    total_op = _effective_df_hamiltonian_fermion_operator(constant, one_body_spin, model)
+    if timings is not None:
+        timings["build_fermion_operator_s"] = perf_counter() - t0
+
+    t0 = perf_counter()
+    reference_determinant = _physical_sector_reference_determinant(
+        nelec_alpha=int(nelec_alpha),
+        nelec_beta=int(nelec_beta),
+        n_qubits=int(model.N),
+    )
+    if timings is not None:
+        timings["build_reference_determinant_s"] = perf_counter() - t0
+
+    t0 = perf_counter()
+    basis_indices = _sector_basis_indices_from_reference(
+        reference_determinant,
+        excitation_level=int(nelec_alpha + nelec_beta),
+        spin_preserving=True,
+    )
+    if timings is not None:
+        timings["build_sector_basis_indices_s"] = perf_counter() - t0
+
+    t0 = perf_counter()
+    restricted_sparse = get_number_preserving_sparse_operator(
+        total_op,
+        num_qubits=int(model.N),
+        num_electrons=int(nelec_alpha + nelec_beta),
+        spin_preserving=True,
+        reference_determinant=reference_determinant,
+    )
+    if timings is not None:
+        timings["build_restricted_sparse_s"] = perf_counter() - t0
+        timings["restricted_sparse_nnz"] = float(restricted_sparse.nnz)
+        timings["restricted_sparse_dim"] = float(restricted_sparse.shape[0])
+    return restricted_sparse, basis_indices, reference_determinant
 
 
 def _ground_state_from_sparse(h_sparse):
@@ -220,9 +393,25 @@ def _ground_state_from_sparse_physical_sector(
     distance: float | None,
     basis: str | None,
     n_qubits: int | None = None,
+    solver: str = "eigsh",
+    solver_tol: float = 1e-10,
+    solver_maxiter: int | None = None,
+    davidson_eps: float = 1e-8,
+    davidson_max_subspace: int = 80,
+    davidson_max_iterations: int = 200,
 ) -> tuple[float, np.ndarray, dict[str, object]]:
     if n_qubits is None:
         n_qubits = int(np.log2(h_sparse.shape[0]))
+    if solver not in ("eigsh", "davidson"):
+        raise ValueError("solver must be 'eigsh' or 'davidson'.")
+    if solver_tol <= 0:
+        raise ValueError("solver_tol must be positive.")
+    if davidson_eps <= 0:
+        raise ValueError("davidson_eps must be positive.")
+    if davidson_max_subspace <= 2:
+        raise ValueError("davidson_max_subspace must be greater than 2.")
+    if davidson_max_iterations <= 0:
+        raise ValueError("davidson_max_iterations must be positive.")
 
     sector_info = _physical_sector_metadata(
         molecule_type,
@@ -231,19 +420,75 @@ def _ground_state_from_sparse_physical_sector(
         n_qubits=n_qubits,
     )
     select_indices = np.asarray(sector_info["select_indices"], dtype=int)
-    restricted = h_sparse[np.ix_(select_indices, select_indices)]
+    sector_dim = int(select_indices.size)
+    restricted_sparse = h_sparse.tocsr()[select_indices][:, select_indices].tocsc()
+    restricted_diag = np.asarray(restricted_sparse.diagonal(), dtype=np.complex128).reshape(-1)
 
-    if restricted.shape[0] <= 2:
-        dense_restricted = restricted.toarray()
+    hf_occupied = [2 * i for i in range(int(sector_info["nelec_alpha"]))]
+    hf_occupied.extend(2 * i + 1 for i in range(int(sector_info["nelec_beta"])))
+    hf_index = 0
+    for orb in hf_occupied:
+        hf_index |= 1 << (n_qubits - 1 - int(orb))
+    hf_pos = int(np.searchsorted(select_indices, hf_index))
+    v0 = None
+    if 0 <= hf_pos < sector_dim and int(select_indices[hf_pos]) == hf_index:
+        v0 = np.zeros(sector_dim, dtype=np.complex128)
+        v0[hf_pos] = 1.0
+
+    def _sector_matvec(vec: np.ndarray) -> np.ndarray:
+        vec = np.asarray(vec, dtype=np.complex128).reshape(-1)
+        if vec.shape[0] != sector_dim:
+            raise ValueError(
+                f"Sector vector dimension mismatch: got {vec.shape[0]}, expected {sector_dim}."
+            )
+        return np.asarray(restricted_sparse @ vec, dtype=np.complex128).reshape(-1)
+
+    linop = LinearOperator(
+        (sector_dim, sector_dim),
+        matvec=_sector_matvec,
+        dtype=np.complex128,
+    )
+
+    if sector_dim <= 2:
+        dense_restricted = restricted_sparse.toarray()
         evals, evecs = np.linalg.eigh(dense_restricted)
         idx = int(np.argmin(evals.real))
-        energy = float(evals.real[idx])
+        energy = float(np.real_if_close(evals[idx]))
         sector_state = np.asarray(evecs[:, idx], dtype=np.complex128)
     else:
-        evals, evecs = eigsh(restricted, k=1, which="SA")
-        idx = int(np.argmin(evals.real))
-        energy = float(evals.real[idx])
-        sector_state = np.asarray(evecs[:, idx], dtype=np.complex128)
+        if solver == "eigsh":
+            evals, evecs = eigsh(
+                linop,
+                k=1,
+                which="SA",
+                tol=float(solver_tol),
+                maxiter=solver_maxiter,
+                v0=v0,
+            )
+            idx = int(np.argmin(evals.real))
+            energy = float(np.real_if_close(evals[idx]))
+            sector_state = np.asarray(evecs[:, idx], dtype=np.complex128)
+        else:
+            from openfermion.linalg import Davidson, DavidsonOptions
+
+            options = DavidsonOptions(
+                max_subspace=int(davidson_max_subspace),
+                max_iterations=int(davidson_max_iterations),
+                eps=float(davidson_eps),
+                real_only=False,
+            )
+            davidson = Davidson(
+                linear_operator=linop,
+                linear_operator_diagonal=restricted_diag,
+                options=options,
+            )
+            success, evals, evecs = davidson.get_lowest_n(1)
+            if not bool(success):
+                raise RuntimeError(
+                    "Davidson did not converge for df_sector physical subspace."
+                )
+            energy = float(np.real_if_close(np.asarray(evals)[0]))
+            sector_state = np.asarray(evecs[:, 0], dtype=np.complex128)
 
     full_state = np.zeros(h_sparse.shape[0], dtype=np.complex128)
     full_state[select_indices] = sector_state
@@ -251,7 +496,641 @@ def _ground_state_from_sparse_physical_sector(
     if norm == 0.0:
         raise ValueError("Restricted sparse ground state has zero norm.")
     full_state /= norm
+    sector_info["solver"] = solver
+    sector_info["solver_tol"] = float(solver_tol)
+    sector_info["restricted_dim"] = int(restricted_sparse.shape[0])
+    sector_info["restricted_nnz"] = int(restricted_sparse.nnz)
+    sector_info["hf_guess_index"] = int(hf_index)
     return energy, full_state, sector_info
+
+
+def _ground_state_from_restricted_sparse(
+    restricted_sparse,
+    *,
+    basis_indices: np.ndarray,
+    full_dim: int,
+    solver: str = "eigsh",
+    solver_tol: float = 1e-10,
+    solver_maxiter: int | None = None,
+    davidson_eps: float = 1e-8,
+    davidson_max_subspace: int = 80,
+    davidson_max_iterations: int = 200,
+    timings: dict[str, float] | None = None,
+) -> tuple[float, np.ndarray, dict[str, object]]:
+    t0_total = perf_counter()
+    basis_indices = np.asarray(basis_indices, dtype=int).reshape(-1)
+    sector_dim = int(basis_indices.size)
+    if restricted_sparse.shape != (sector_dim, sector_dim):
+        raise ValueError(
+            "Restricted sparse operator shape does not match basis_indices size."
+        )
+    if solver not in ("eigsh", "davidson"):
+        raise ValueError("solver must be 'eigsh' or 'davidson'.")
+
+    t0 = perf_counter()
+    restricted_sparse = restricted_sparse.tocsc()
+    restricted_diag = np.asarray(restricted_sparse.diagonal(), dtype=np.complex128).reshape(-1)
+    if timings is not None:
+        timings["solver_prepare_sparse_s"] = perf_counter() - t0
+    v0 = None
+    if sector_dim > 0:
+        v0 = np.zeros(sector_dim, dtype=np.complex128)
+        v0[0] = 1.0
+
+    if sector_dim <= 2:
+        t0 = perf_counter()
+        dense_restricted = restricted_sparse.toarray()
+        evals, evecs = np.linalg.eigh(dense_restricted)
+        idx = int(np.argmin(evals.real))
+        energy = float(np.real_if_close(evals[idx]))
+        sector_state = np.asarray(evecs[:, idx], dtype=np.complex128)
+        if timings is not None:
+            timings["solver_dense_small_sector_s"] = perf_counter() - t0
+    elif solver == "eigsh":
+        t0 = perf_counter()
+        evals, evecs = eigsh(
+            restricted_sparse,
+            k=1,
+            which="SA",
+            tol=float(solver_tol),
+            maxiter=solver_maxiter,
+            v0=v0,
+        )
+        idx = int(np.argmin(evals.real))
+        energy = float(np.real_if_close(evals[idx]))
+        sector_state = np.asarray(evecs[:, idx], dtype=np.complex128)
+        if timings is not None:
+            timings["solver_eigsh_s"] = perf_counter() - t0
+    else:
+        from openfermion.linalg import DavidsonOptions, SparseDavidson
+
+        t0 = perf_counter()
+        matrix_is_real = bool(
+            restricted_sparse.nnz == 0
+            or np.max(np.abs(np.imag(restricted_sparse.data))) < 1e-14
+        )
+        options = DavidsonOptions(
+            max_subspace=int(davidson_max_subspace),
+            max_iterations=int(davidson_max_iterations),
+            eps=float(davidson_eps),
+            real_only=matrix_is_real,
+        )
+        davidson = SparseDavidson(restricted_sparse, options=options)
+        initial_guess = None
+        if v0 is not None:
+            initial_guess = v0.reshape(-1, 1)
+        success, evals, evecs = davidson.get_lowest_n(1, initial_guess=initial_guess)
+        if not bool(success):
+            raise RuntimeError("Davidson did not converge for restricted physical sector.")
+        energy = float(np.real_if_close(np.asarray(evals)[0]))
+        sector_state = np.asarray(evecs[:, 0], dtype=np.complex128)
+        if timings is not None:
+            timings["solver_davidson_s"] = perf_counter() - t0
+
+    t0 = perf_counter()
+    full_state = np.zeros(int(full_dim), dtype=np.complex128)
+    full_state[basis_indices] = sector_state
+    norm = float(np.linalg.norm(full_state))
+    if norm == 0.0:
+        raise ValueError("Restricted sparse ground state has zero norm.")
+    full_state /= norm
+    if timings is not None:
+        timings["embed_full_state_s"] = perf_counter() - t0
+        timings["solver_total_s"] = perf_counter() - t0_total
+    return energy, full_state, {
+        "solver": solver,
+        "solver_tol": float(solver_tol),
+        "restricted_dim": sector_dim,
+        "restricted_nnz": int(restricted_sparse.nnz),
+        "hf_guess_index": int(basis_indices[0]) if sector_dim else None,
+    }
+
+
+def _is_spin_preserving_one_body_matrix(
+    coeff_mat: np.ndarray,
+    *,
+    tol: float = 1e-12,
+) -> bool:
+    coeff_mat = np.asarray(coeff_mat)
+    n = int(coeff_mat.shape[0])
+    parity = np.arange(n) % 2
+    mixed_spin = parity[:, None] != parity[None, :]
+    if not np.any(mixed_spin):
+        return True
+    return bool(np.max(np.abs(coeff_mat[mixed_spin])) <= tol)
+
+
+def _popcount_uint64(values: np.ndarray) -> np.ndarray:
+    x = np.asarray(values, dtype=np.uint64).copy()
+    x = x - ((x >> np.uint64(1)) & np.uint64(0x5555555555555555))
+    x = (x & np.uint64(0x3333333333333333)) + (
+        (x >> np.uint64(2)) & np.uint64(0x3333333333333333)
+    )
+    x = (x + (x >> np.uint64(4))) & np.uint64(0x0F0F0F0F0F0F0F0F)
+    x = (x * np.uint64(0x0101010101010101)) >> np.uint64(56)
+    return np.asarray(x, dtype=np.uint8)
+
+
+def _fermion_prefix_parity_signs(
+    states: np.ndarray,
+    orbital: int,
+    *,
+    n_qubits: int,
+) -> np.ndarray:
+    states = np.asarray(states, dtype=np.uint64).reshape(-1)
+    if states.size == 0:
+        return np.zeros(0, dtype=np.float64)
+    if orbital <= 0:
+        return np.ones(states.size, dtype=np.float64)
+    shifted = states >> np.uint64(n_qubits - int(orbital))
+    parity = _popcount_uint64(shifted) & np.uint8(1)
+    return np.where(parity.astype(bool), -1.0, 1.0).astype(np.float64)
+
+
+def _build_sector_one_body_transition_cache(
+    basis_indices: np.ndarray,
+    *,
+    n_qubits: int,
+    timings: dict[str, float] | None = None,
+) -> dict[str, object]:
+    t0 = perf_counter()
+    basis_uint = np.asarray(basis_indices, dtype=np.uint64).reshape(-1)
+    sector_dim = int(basis_uint.size)
+    sort_order = np.argsort(basis_uint, kind="mergesort")
+    basis_sorted = basis_uint[sort_order]
+    bit_masks = np.asarray(
+        [np.uint64(1 << (n_qubits - 1 - orb)) for orb in range(n_qubits)],
+        dtype=np.uint64,
+    )
+    occ_positions = [
+        np.flatnonzero((basis_uint & bit_masks[q]) != 0).astype(np.int32)
+        for q in range(n_qubits)
+    ]
+    transitions: list[list[tuple[np.ndarray, np.ndarray, np.ndarray] | None]] = [
+        [None for _ in range(n_qubits)] for _ in range(n_qubits)
+    ]
+    total_transitions = 0
+    for q in range(n_qubits):
+        occ_cols = occ_positions[q]
+        occ_states = basis_uint[occ_cols]
+        for p in range(n_qubits):
+            if p == q:
+                continue
+            mask_unoccupied = (occ_states & bit_masks[p]) == 0
+            cols = occ_cols[mask_unoccupied]
+            if cols.size == 0:
+                transitions[p][q] = (
+                    np.zeros(0, dtype=np.int32),
+                    np.zeros(0, dtype=np.int32),
+                    np.zeros(0, dtype=np.float64),
+                )
+                continue
+            states = occ_states[mask_unoccupied]
+            after_ann = np.bitwise_xor(states, bit_masks[q])
+            targets = np.bitwise_xor(after_ann, bit_masks[p])
+            pos_sorted = np.searchsorted(basis_sorted, targets)
+            valid = (pos_sorted < sector_dim) & (basis_sorted[pos_sorted] == targets)
+            rows = sort_order[pos_sorted[valid]].astype(np.int32, copy=False)
+            cols_valid = cols[valid].astype(np.int32, copy=False)
+            states_valid = states[valid]
+            after_ann_valid = after_ann[valid]
+            signs = _fermion_prefix_parity_signs(
+                states_valid,
+                q,
+                n_qubits=n_qubits,
+            ) * _fermion_prefix_parity_signs(
+                after_ann_valid,
+                p,
+                n_qubits=n_qubits,
+            )
+            transitions[p][q] = (rows, cols_valid, signs)
+            total_transitions += int(cols_valid.size)
+    if timings is not None:
+        timings["build_transition_cache_s"] = perf_counter() - t0
+        timings["transition_cache_total_transitions"] = float(total_transitions)
+        timings["transition_cache_dim"] = float(sector_dim)
+    return {
+        "basis_indices": basis_indices,
+        "occ_positions": occ_positions,
+        "transitions": transitions,
+        "n_qubits": int(n_qubits),
+        "sector_dim": int(sector_dim),
+    }
+
+
+def _compile_one_body_sector_operator(
+    coeff_mat: np.ndarray,
+    cache: dict[str, object],
+    *,
+    tol: float = 1e-14,
+) -> dict[str, object]:
+    coeff_mat = np.asarray(coeff_mat, dtype=np.complex128)
+    n_qubits = int(cache["n_qubits"])
+    occ_positions = cache["occ_positions"]
+    transitions = cache["transitions"]
+    diag_terms: list[tuple[np.ndarray, complex]] = []
+    offdiag_terms: list[tuple[np.ndarray, np.ndarray, np.ndarray, complex]] = []
+    diag = np.diag(coeff_mat)
+    for q in range(n_qubits):
+        coeff = complex(diag[q])
+        if abs(coeff) > tol and occ_positions[q].size:
+            diag_terms.append((occ_positions[q], coeff))
+    for p in range(n_qubits):
+        for q in range(n_qubits):
+            if p == q:
+                continue
+            coeff = complex(coeff_mat[p, q])
+            if abs(coeff) <= tol:
+                continue
+            rows, cols, signs = transitions[p][q]
+            if cols.size:
+                offdiag_terms.append((rows, cols, signs, coeff))
+    return {
+        "diag_terms": diag_terms,
+        "offdiag_terms": offdiag_terms,
+    }
+
+
+def _apply_compiled_one_body_sector_operator(
+    operator_data: dict[str, object],
+    vec: np.ndarray,
+) -> np.ndarray:
+    x = np.asarray(vec, dtype=np.complex128).reshape(-1)
+    y = np.zeros_like(x)
+    for indices, coeff in operator_data["diag_terms"]:
+        y[indices] += coeff * x[indices]
+    for rows, cols, signs, coeff in operator_data["offdiag_terms"]:
+        y[rows] += coeff * signs * x[cols]
+    return y
+
+
+def _spinless_reference_determinant(
+    *,
+    num_electrons: int,
+    num_orbitals: int,
+) -> np.ndarray:
+    ref = np.zeros(int(num_orbitals), dtype=bool)
+    ref[: int(num_electrons)] = True
+    return ref
+
+
+def _split_spin_preserving_one_body_matrix(
+    coeff_mat: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    coeff_mat = np.asarray(coeff_mat, dtype=np.complex128)
+    return coeff_mat[::2, ::2], coeff_mat[1::2, 1::2]
+
+
+def _build_spin_factorized_sector_basis(
+    *,
+    n_spatial: int,
+    nelec_alpha: int,
+    nelec_beta: int,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, int, int]:
+    ref_alpha = _spinless_reference_determinant(
+        num_electrons=int(nelec_alpha),
+        num_orbitals=int(n_spatial),
+    )
+    ref_beta = _spinless_reference_determinant(
+        num_electrons=int(nelec_beta),
+        num_orbitals=int(n_spatial),
+    )
+    alpha_basis_indices = _sector_basis_indices_from_reference(
+        ref_alpha,
+        excitation_level=int(nelec_alpha),
+        spin_preserving=False,
+    )
+    beta_basis_indices = _sector_basis_indices_from_reference(
+        ref_beta,
+        excitation_level=int(nelec_beta),
+        spin_preserving=False,
+    )
+
+    alpha_bits = np.asarray(alpha_basis_indices, dtype=np.uint64)
+    beta_bits = np.asarray(beta_basis_indices, dtype=np.uint64)
+    orbital_masks = np.asarray(
+        [np.uint64(1 << (n_spatial - 1 - orb)) for orb in range(n_spatial)],
+        dtype=np.uint64,
+    )
+    alpha_occ = (alpha_bits[:, None] & orbital_masks[None, :]) != 0
+    beta_occ = (beta_bits[:, None] & orbital_masks[None, :]) != 0
+
+    alpha_weights = np.asarray(
+        [np.uint64(1 << (2 * n_spatial - 1 - 2 * orb)) for orb in range(n_spatial)],
+        dtype=np.uint64,
+    )
+    beta_weights = np.asarray(
+        [np.uint64(1 << (2 * n_spatial - 2 - 2 * orb)) for orb in range(n_spatial)],
+        dtype=np.uint64,
+    )
+    alpha_components = np.sum(
+        alpha_occ.astype(np.uint64) * alpha_weights[None, :],
+        axis=1,
+        dtype=np.uint64,
+    )
+    beta_components = np.sum(
+        beta_occ.astype(np.uint64) * beta_weights[None, :],
+        axis=1,
+        dtype=np.uint64,
+    )
+    product_basis_indices = np.bitwise_or(
+        alpha_components[:, None],
+        beta_components[None, :],
+    ).reshape(-1)
+
+    alpha_gt_counts = (
+        np.cumsum(alpha_occ[:, ::-1].astype(np.int16), axis=1)[:, ::-1]
+        - alpha_occ.astype(np.int16)
+    )
+    inversions = alpha_gt_counts @ beta_occ.T.astype(np.int16)
+    product_basis_phases = (1.0 - 2.0 * (inversions & 1)).reshape(-1).astype(np.float64)
+    return (
+        np.asarray(product_basis_indices, dtype=int),
+        product_basis_phases,
+        np.asarray(alpha_basis_indices, dtype=int),
+        int(alpha_bits.size),
+        int(beta_bits.size),
+    )
+
+
+def _coerce_sector_operator_matrix(
+    op,
+    *,
+    use_real: bool,
+    dense_threshold: int,
+):
+    target_dtype = np.float64 if use_real else np.complex128
+    if sp.issparse(op):
+        op = op.tocsr()
+        if use_real:
+            op = op.real.astype(np.float64)
+        else:
+            op = op.astype(np.complex128)
+        if op.shape[0] <= int(dense_threshold):
+            return np.asarray(op.toarray(), dtype=target_dtype)
+        return op
+    return np.asarray(np.real_if_close(op), dtype=target_dtype)
+
+
+def _build_spinless_sector_one_body_operator(
+    coeff_mat: np.ndarray,
+    *,
+    num_electrons: int,
+    use_real: bool,
+    dense_threshold: int,
+):
+    num_orbitals = int(coeff_mat.shape[0])
+    reference_determinant = _spinless_reference_determinant(
+        num_electrons=int(num_electrons),
+        num_orbitals=num_orbitals,
+    )
+    sector_sparse = get_number_preserving_sparse_operator(
+        _one_body_fermion_op(coeff_mat),
+        num_qubits=num_orbitals,
+        num_electrons=int(num_electrons),
+        spin_preserving=False,
+        reference_determinant=reference_determinant,
+    )
+    return _coerce_sector_operator_matrix(
+        sector_sparse,
+        use_real=use_real,
+        dense_threshold=dense_threshold,
+    )
+
+
+def _square_sector_operator(op):
+    squared = op @ op
+    if sp.issparse(squared):
+        return squared.tocsr()
+    return np.asarray(squared)
+
+
+def _apply_sector_operator_left(op, x: np.ndarray) -> np.ndarray:
+    if sp.issparse(op):
+        return np.asarray(op @ x)
+    return np.asarray(op @ x)
+
+
+def _apply_sector_operator_right(x: np.ndarray, op) -> np.ndarray:
+    if sp.issparse(op):
+        return np.asarray((op @ x.T).T)
+    return np.asarray(x @ op.T)
+
+
+def _build_df_sector_matrix_free_operator(
+    constant: float,
+    one_body_spin: np.ndarray,
+    model: DFModel,
+    *,
+    nelec_alpha: int,
+    nelec_beta: int,
+    timings: dict[str, float] | None = None,
+    dense_spin_sector_threshold: int = 384,
+) -> tuple[LinearOperator, np.ndarray, np.ndarray, dict[str, object]]:
+    t0 = perf_counter()
+    h_eff = one_body_spin + model.one_body_correction
+    u_one, eps = diag_hermitian(h_eff, assume_hermitian=True)
+    herm_one_body = u_one @ np.diag(eps) @ u_one.conj().T
+    g_herm_list: list[np.ndarray] = []
+    for g_mat in model.G_list:
+        u_g, eta = diag_hermitian(g_mat, assume_hermitian=True)
+        g_herm_list.append(u_g @ np.diag(eta) @ u_g.conj().T)
+    if timings is not None:
+        timings["prepare_one_body_coefficients_s"] = perf_counter() - t0
+
+    if not _is_spin_preserving_one_body_matrix(herm_one_body):
+        raise ValueError("matrix_free df_sector requires spin-preserving one-body Hamiltonian.")
+    for g_herm in g_herm_list:
+        if not _is_spin_preserving_one_body_matrix(g_herm):
+            raise ValueError("matrix_free df_sector requires spin-preserving DF blocks.")
+
+    use_real = bool(
+        np.max(np.abs(np.imag(herm_one_body))) <= 1e-12
+        and all(np.max(np.abs(np.imag(g_herm))) <= 1e-12 for g_herm in g_herm_list)
+        and abs(np.imag(constant + model.constant_correction)) <= 1e-12
+        and np.max(np.abs(np.imag(model.lambdas))) <= 1e-12
+    )
+    operator_dtype = np.float64 if use_real else np.complex128
+
+    n_spatial = int(model.N // 2)
+    t0 = perf_counter()
+    product_basis_indices, product_basis_phases, alpha_basis_indices, dim_alpha, dim_beta = (
+        _build_spin_factorized_sector_basis(
+            n_spatial=n_spatial,
+            nelec_alpha=int(nelec_alpha),
+            nelec_beta=int(nelec_beta),
+        )
+    )
+    reference_determinant = _physical_sector_reference_determinant(
+        nelec_alpha=int(nelec_alpha),
+        nelec_beta=int(nelec_beta),
+        n_qubits=int(model.N),
+    )
+    basis_indices = _sector_basis_indices_from_reference(
+        reference_determinant,
+        excitation_level=int(nelec_alpha + nelec_beta),
+        spin_preserving=True,
+    )
+    product_sort = np.argsort(product_basis_indices, kind="mergesort")
+    product_sorted = product_basis_indices[product_sort]
+    positions = np.searchsorted(product_sorted, basis_indices)
+    if np.any(positions >= product_sorted.size) or np.any(product_sorted[positions] != basis_indices):
+        raise ValueError("Matrix-free DF sector basis mismatch against interleaved basis ordering.")
+    current_to_product = product_sort[positions].astype(np.int32, copy=False)
+    basis_phases = product_basis_phases[current_to_product].astype(operator_dtype, copy=False)
+    if timings is not None:
+        timings["prepare_sector_basis_total_s"] = perf_counter() - t0
+        timings["alpha_sector_dim"] = float(dim_alpha)
+        timings["beta_sector_dim"] = float(dim_beta)
+        timings["restricted_dim"] = float(basis_indices.size)
+
+    t0 = perf_counter()
+    one_body_alpha_coeff, one_body_beta_coeff = _split_spin_preserving_one_body_matrix(
+        herm_one_body
+    )
+    one_body_alpha = _build_spinless_sector_one_body_operator(
+        one_body_alpha_coeff,
+        num_electrons=int(nelec_alpha),
+        use_real=use_real,
+        dense_threshold=dense_spin_sector_threshold,
+    )
+    one_body_beta = _build_spinless_sector_one_body_operator(
+        one_body_beta_coeff,
+        num_electrons=int(nelec_beta),
+        use_real=use_real,
+        dense_threshold=dense_spin_sector_threshold,
+    )
+    left_total_alpha = one_body_alpha.copy()
+    right_total_beta = one_body_beta.copy()
+    cross_terms: list[tuple[float | complex, object, object]] = []
+    for lam, g_herm in zip(model.lambdas, g_herm_list):
+        g_alpha_coeff, g_beta_coeff = _split_spin_preserving_one_body_matrix(g_herm)
+        g_alpha = _build_spinless_sector_one_body_operator(
+            g_alpha_coeff,
+            num_electrons=int(nelec_alpha),
+            use_real=use_real,
+            dense_threshold=dense_spin_sector_threshold,
+        )
+        g_beta = _build_spinless_sector_one_body_operator(
+            g_beta_coeff,
+            num_electrons=int(nelec_beta),
+            use_real=use_real,
+            dense_threshold=dense_spin_sector_threshold,
+        )
+        lam_scalar = float(np.real_if_close(lam)) if use_real else complex(lam)
+        left_total_alpha = left_total_alpha + lam_scalar * _square_sector_operator(g_alpha)
+        right_total_beta = right_total_beta + lam_scalar * _square_sector_operator(g_beta)
+        cross_terms.append((2.0 * lam_scalar, g_alpha, g_beta))
+    if timings is not None:
+        timings["build_spin_sector_operators_s"] = perf_counter() - t0
+        timings["compiled_num_df_blocks"] = float(len(cross_terms))
+        timings["matrix_free_real_dtype"] = 1.0 if use_real else 0.0
+
+    sector_dim = int(basis_indices.size)
+    const_shift = (
+        float(np.real_if_close(constant + model.constant_correction))
+        if use_real
+        else complex(constant + model.constant_correction)
+    )
+    identity_permutation = np.array_equal(current_to_product, np.arange(sector_dim, dtype=np.int32))
+
+    def _matvec(vec: np.ndarray) -> np.ndarray:
+        x_current = np.asarray(np.real_if_close(vec), dtype=operator_dtype).reshape(-1)
+        if x_current.shape[0] != sector_dim:
+            raise ValueError(
+                f"Sector vector dimension mismatch: got {x_current.shape[0]}, expected {sector_dim}."
+            )
+        if identity_permutation:
+            x_product = basis_phases * x_current
+        else:
+            x_product = np.empty_like(x_current)
+            x_product[current_to_product] = basis_phases * x_current
+        x_matrix = x_product.reshape(dim_alpha, dim_beta)
+        y_matrix = const_shift * x_matrix
+        y_matrix = y_matrix + _apply_sector_operator_left(left_total_alpha, x_matrix)
+        y_matrix = y_matrix + _apply_sector_operator_right(x_matrix, right_total_beta)
+        for coeff, g_alpha, g_beta in cross_terms:
+            y_matrix = y_matrix + coeff * _apply_sector_operator_left(
+                g_alpha,
+                _apply_sector_operator_right(x_matrix, g_beta),
+            )
+        y_product = np.asarray(y_matrix, dtype=operator_dtype).reshape(-1)
+        if identity_permutation:
+            return basis_phases * y_product
+        return basis_phases * y_product[current_to_product]
+
+    linop = LinearOperator(
+        (sector_dim, sector_dim),
+        matvec=_matvec,
+        dtype=operator_dtype,
+    )
+    return linop, basis_indices, {
+        "restricted_dim": sector_dim,
+        "restricted_nnz": None,
+        "hf_guess_index": int(basis_indices[0]) if sector_dim else None,
+        "matrix_free": True,
+        "matrix_free_real_dtype": use_real,
+        "alpha_sector_dim": int(dim_alpha),
+        "beta_sector_dim": int(dim_beta),
+    }
+
+
+def _ground_state_from_matrix_free_operator(
+    linear_operator: LinearOperator,
+    *,
+    basis_indices: np.ndarray,
+    full_dim: int,
+    solver_tol: float = 1e-10,
+    solver_maxiter: int | None = None,
+    timings: dict[str, float] | None = None,
+) -> tuple[float, np.ndarray, dict[str, object]]:
+    t0_total = perf_counter()
+    basis_indices = np.asarray(basis_indices, dtype=int).reshape(-1)
+    sector_dim = int(basis_indices.size)
+    v0 = None
+    if sector_dim > 0:
+        v0 = np.zeros(sector_dim, dtype=linear_operator.dtype)
+        v0[0] = 1.0
+    t0 = perf_counter()
+    if sector_dim <= 2:
+        eye = np.eye(sector_dim, dtype=linear_operator.dtype)
+        dense = np.column_stack([linear_operator @ eye[:, i] for i in range(sector_dim)])
+        evals, evecs = np.linalg.eigh(dense)
+        idx = int(np.argmin(evals.real))
+        energy = float(np.real_if_close(evals[idx]))
+        sector_state = np.asarray(evecs[:, idx], dtype=np.complex128)
+    else:
+        evals, evecs = eigsh(
+            linear_operator,
+            k=1,
+            which="SA",
+            tol=float(solver_tol),
+            maxiter=solver_maxiter,
+            v0=v0,
+        )
+        idx = int(np.argmin(evals.real))
+        energy = float(np.real_if_close(evals[idx]))
+        sector_state = np.asarray(evecs[:, idx], dtype=np.complex128)
+    if timings is not None:
+        timings["solver_eigsh_s"] = perf_counter() - t0
+    t0 = perf_counter()
+    full_state = np.zeros(int(full_dim), dtype=np.complex128)
+    full_state[basis_indices] = sector_state
+    norm = float(np.linalg.norm(full_state))
+    if norm == 0.0:
+        raise ValueError("Matrix-free ground state has zero norm.")
+    full_state /= norm
+    if timings is not None:
+        timings["embed_full_state_s"] = perf_counter() - t0
+        timings["solver_total_s"] = perf_counter() - t0_total
+    return energy, full_state, {
+        "solver": "eigsh",
+        "solver_tol": float(solver_tol),
+        "restricted_dim": sector_dim,
+        "restricted_nnz": None,
+        "hf_guess_index": int(basis_indices[0]) if sector_dim else None,
+        "matrix_free": True,
+    }
 
 
 def _reorder_sparse_matrix(mat, perm: np.ndarray):
@@ -384,6 +1263,281 @@ def _h_chain_integrals_pyscf(
 ) -> tuple[float, np.ndarray, np.ndarray]:
     _, _, constant, one_body, two_body = _run_scf_and_integrals(molecule_type)
     return float(constant), one_body, two_body
+
+
+def df_ground_state_physical_sector(
+    *,
+    molecule_type: int = 2,
+    rank: int | None = None,
+    rank_fraction: float | None = None,
+    tol: float | None = None,
+    distance: float | None = None,
+    basis: str | None = None,
+    solver: str = "eigsh",
+    solver_tol: float = 1e-10,
+    solver_maxiter: int | None = None,
+    davidson_eps: float = 1e-8,
+    davidson_max_subspace: int = 80,
+    davidson_max_iterations: int = 200,
+    matrix_free: bool = False,
+    compare_with_sparse_eigsh: bool = False,
+    load_artifact: bool = False,
+    save_artifact: bool = False,
+    profile: bool = False,
+    debug: bool = False,
+    debug_print: Callable[[str], None] = print,
+) -> tuple[float, np.ndarray, dict[str, object]]:
+    """Compute DF ground state in the physical electron sector via matvec-only solver."""
+    total_start = perf_counter()
+    profile_data: dict[str, float] = {}
+
+    if rank is not None and rank_fraction is not None:
+        raise ValueError("rank and rank_fraction are mutually exclusive.")
+
+    if rank is None and rank_fraction is None:
+        config_rank_fraction = get_df_rank_fraction_for_molecule(int(molecule_type))
+        if config_rank_fraction is not None:
+            rank_fraction = float(config_rank_fraction)
+            if debug:
+                debug_print(
+                    "rank_fraction from config: "
+                    f"molecule_type={int(molecule_type)} "
+                    f"rank_fraction={rank_fraction:.6f}"
+                )
+
+    t0 = perf_counter()
+    constant, one_body, two_body = _h_chain_integrals(
+        molecule_type,
+        distance=distance,
+        basis=basis,
+    )
+    profile_data["build_integrals_s"] = perf_counter() - t0
+    if rank_fraction is not None:
+        if rank_fraction <= 0:
+            raise ValueError("rank_fraction must be positive.")
+        n_spatial = int(one_body.shape[0])
+        full_rank = int(n_spatial**2)
+        if rank_fraction >= 1.0:
+            rank = full_rank
+            if tol is None:
+                tol = 0.0
+        else:
+            rank = int(round(full_rank * rank_fraction))
+            rank = max(1, min(rank, full_rank))
+
+    artifact_name = _df_sector_ground_state_artifact_name(
+        molecule_type=int(molecule_type),
+        distance=distance,
+        basis=basis,
+        rank=rank,
+        rank_fraction=rank_fraction,
+        tol=tol,
+    )
+    if load_artifact and not compare_with_sparse_eigsh:
+        t0 = perf_counter()
+        cached_ground_state = _load_df_ground_state_artifact(artifact_name)
+        load_elapsed = perf_counter() - t0
+        if cached_ground_state is not None:
+            energy_cached, state_cached, info_cached = cached_ground_state
+            info_cached["artifact_name"] = artifact_name
+            info_cached["loaded_from_artifact"] = True
+            if profile:
+                info_cached["profile"] = {
+                    "build_integrals_s": profile_data["build_integrals_s"],
+                    "load_artifact_s": load_elapsed,
+                    "total_s": perf_counter() - total_start,
+                }
+            if debug:
+                debug_print(
+                    "df_ground_state_physical_sector loaded artifact: "
+                    f"{artifact_name}"
+                )
+            return energy_cached, state_cached, info_cached
+
+    t0 = perf_counter()
+    two_body = _symmetrize_two_body(two_body)
+    one_body_spin, _ = spinorb_from_spatial(one_body, two_body * 0.5)
+    profile_data["prepare_spinorbital_s"] = perf_counter() - t0
+
+    t0 = perf_counter()
+    model = df_decompose_from_integrals(
+        one_body,
+        two_body,
+        constant=constant,
+        rank=rank,
+        tol=tol,
+    ).hermitize()
+    profile_data["df_decompose_s"] = perf_counter() - t0
+
+    t0 = perf_counter()
+    sector_meta = _physical_sector_metadata(
+        molecule_type,
+        distance=distance,
+        basis=basis,
+        n_qubits=model.N,
+    )
+    profile_data["build_sector_metadata_s"] = perf_counter() - t0
+
+    build_profile: dict[str, float] = {}
+    solver_profile: dict[str, float] = {}
+    comparison_info: dict[str, object] | None = None
+    if matrix_free and solver != "eigsh":
+        if debug:
+            debug_print(
+                "matrix_free path currently supports solver='eigsh' only; "
+                "falling back to sparse restricted operator."
+            )
+        matrix_free = False
+
+    if matrix_free:
+        t0 = perf_counter()
+        linear_operator, basis_indices, operator_info = _build_df_sector_matrix_free_operator(
+            constant,
+            one_body_spin,
+            model,
+            nelec_alpha=int(sector_meta["nelec_alpha"]),
+            nelec_beta=int(sector_meta["nelec_beta"]),
+            timings=build_profile,
+        )
+        profile_data["build_sector_operator_total_s"] = perf_counter() - t0
+
+        t0 = perf_counter()
+        energy, state, solve_info = _ground_state_from_matrix_free_operator(
+            linear_operator,
+            basis_indices=basis_indices,
+            full_dim=2**model.N,
+            solver_tol=solver_tol,
+            solver_maxiter=solver_maxiter,
+            timings=solver_profile,
+        )
+        profile_data["solve_ground_state_total_s"] = perf_counter() - t0
+        solve_info = {**operator_info, **solve_info}
+    else:
+        t0 = perf_counter()
+        restricted_sparse, basis_indices, _ = _effective_df_hamiltonian_sector_sparse(
+            constant,
+            one_body_spin,
+            model,
+            nelec_alpha=int(sector_meta["nelec_alpha"]),
+            nelec_beta=int(sector_meta["nelec_beta"]),
+            timings=build_profile,
+        )
+        profile_data["build_sector_sparse_total_s"] = perf_counter() - t0
+
+        t0 = perf_counter()
+        energy, state, solve_info = _ground_state_from_restricted_sparse(
+            restricted_sparse,
+            basis_indices=basis_indices,
+            full_dim=2**model.N,
+            solver=solver,
+            solver_tol=solver_tol,
+            solver_maxiter=solver_maxiter,
+            davidson_eps=davidson_eps,
+            davidson_max_subspace=davidson_max_subspace,
+            davidson_max_iterations=davidson_max_iterations,
+            timings=solver_profile,
+        )
+        profile_data["solve_ground_state_total_s"] = perf_counter() - t0
+    if matrix_free and compare_with_sparse_eigsh:
+        comparison_build_profile: dict[str, float] = {}
+        comparison_solver_profile: dict[str, float] = {}
+        t0 = perf_counter()
+        comparison_sparse, comparison_basis_indices, _ = _effective_df_hamiltonian_sector_sparse(
+            constant,
+            one_body_spin,
+            model,
+            nelec_alpha=int(sector_meta["nelec_alpha"]),
+            nelec_beta=int(sector_meta["nelec_beta"]),
+            timings=comparison_build_profile,
+        )
+        comparison_build_total = perf_counter() - t0
+        t0 = perf_counter()
+        comparison_energy, comparison_state, comparison_solve_info = _ground_state_from_restricted_sparse(
+            comparison_sparse,
+            basis_indices=comparison_basis_indices,
+            full_dim=2**model.N,
+            solver="eigsh",
+            solver_tol=solver_tol,
+            solver_maxiter=solver_maxiter,
+            timings=comparison_solver_profile,
+        )
+        comparison_solve_total = perf_counter() - t0
+        overlap = abs(np.vdot(state, comparison_state))
+        comparison_info = {
+            "sparse_eigsh_energy": float(np.real_if_close(comparison_energy)),
+            "sparse_eigsh_restricted_dim": int(comparison_solve_info.get("restricted_dim", len(comparison_basis_indices))),
+            "energy_delta": float(np.real_if_close(energy - comparison_energy)),
+            "state_overlap_abs": float(overlap),
+            "build_sector_sparse_total_s": float(comparison_build_total),
+            "solve_ground_state_total_s": float(comparison_solve_total),
+        }
+        comparison_info.update(
+            {f"sector_builder.{key}": value for key, value in comparison_build_profile.items()}
+        )
+        comparison_info.update(
+            {f"solver.{key}": value for key, value in comparison_solver_profile.items()}
+        )
+
+    info: dict[str, object] = dict(sector_meta)
+    info.update(solve_info)
+    if comparison_info is not None:
+        info["comparison"] = comparison_info
+    info["molecule_type"] = int(molecule_type)
+    info["num_qubits"] = int(model.N)
+    info["rank"] = int(rank) if rank is not None else None
+    info["rank_fraction"] = float(rank_fraction) if rank_fraction is not None else None
+    info["artifact_name"] = artifact_name
+    profile_data.update(
+        {f"sector_builder.{key}": value for key, value in build_profile.items()}
+    )
+    profile_data.update({f"solver.{key}": value for key, value in solver_profile.items()})
+    profile_data["total_s"] = perf_counter() - total_start
+    if profile:
+        info["profile"] = profile_data
+        if debug:
+            debug_print("df_ground_state_physical_sector profile:")
+            for key, value in sorted(
+                profile_data.items(),
+                key=lambda item: item[1],
+                reverse=True,
+            ):
+                if key.endswith("_nnz") or key.endswith("_dim") or key.endswith("_transitions"):
+                    debug_print(f"  {key}={int(value)}")
+                else:
+                    debug_print(f"  {key}={value:.6f}s")
+    if comparison_info is not None and debug:
+        debug_print("df_ground_state_physical_sector comparison (matrix_free vs sparse eigsh):")
+        debug_print(
+            f"  energy={float(np.real_if_close(energy)):.12e} sparse_eigsh={comparison_info['sparse_eigsh_energy']:.12e} "
+            f"delta={comparison_info['energy_delta']:+.3e} overlap={comparison_info['state_overlap_abs']:.12f}"
+        )
+        for key, value in sorted(
+            comparison_info.items(),
+            key=lambda item: item[1] if isinstance(item[1], (int, float)) else -1.0,
+            reverse=True,
+        ):
+            if key in {"sparse_eigsh_energy", "energy_delta", "state_overlap_abs"}:
+                continue
+            if isinstance(value, (int, float)):
+                if key.endswith("_nnz") or key.endswith("_dim") or key.endswith("_transitions"):
+                    debug_print(f"  {key}={int(value)}")
+                else:
+                    debug_print(f"  {key}={value:.6f}s")
+    if save_artifact:
+        _save_df_ground_state_artifact(
+            artifact_name,
+            {
+                "energy": float(np.real_if_close(energy)),
+                "state": state,
+                "info": info,
+            },
+        )
+        if debug:
+            debug_print(
+                "df_ground_state_physical_sector saved artifact: "
+                f"{artifact_name}"
+            )
+    return energy, state, info
 
 
 def _is_df_reference(reference: str) -> bool:
@@ -617,6 +1771,65 @@ def _load_df_rz_layer_artifact(file_name: str) -> dict[str, object] | None:
     if isinstance(data, dict):
         return data
     return None
+
+
+def _artifact_float_token(value: float) -> str:
+    token = format(float(value), ".12g")
+    token = token.replace("-", "m").replace("+", "")
+    token = token.replace(".", "p")
+    return token
+
+
+def _df_sector_ground_state_artifact_name(
+    molecule_type: int,
+    *,
+    distance: float | None,
+    basis: str | None,
+    rank: int | None,
+    rank_fraction: float | None,
+    tol: float | None,
+) -> str:
+    parts = [
+        _artifact_ham_name(molecule_type, distance=distance, basis=basis),
+        "df_sector_ground_state",
+    ]
+    if rank is not None:
+        parts.append(f"rank_{int(rank)}")
+    if rank_fraction is not None:
+        parts.append(f"rankfrac_{_artifact_float_token(rank_fraction)}")
+    if tol is not None:
+        parts.append(f"tol_{_artifact_float_token(tol)}")
+    return "_".join(parts)
+
+
+def _save_df_ground_state_artifact(file_name: str, data: dict[str, object]) -> None:
+    PICKLE_DIR_DF_GROUND_STATE_PATH.mkdir(parents=True, exist_ok=True)
+    path = PICKLE_DIR_DF_GROUND_STATE_PATH / file_name
+    with path.open("wb") as f:
+        pickle.dump(data, f)
+
+
+def _load_df_ground_state_artifact(
+    file_name: str,
+) -> tuple[float, np.ndarray, dict[str, object]] | None:
+    path = PICKLE_DIR_DF_GROUND_STATE_PATH / file_name
+    if not path.exists():
+        return None
+    with path.open("rb") as f:
+        data = pickle.load(f)
+    if not isinstance(data, dict):
+        return None
+    energy = data.get("energy")
+    state = data.get("state")
+    info = data.get("info")
+    if energy is None or state is None or not isinstance(info, dict):
+        return None
+    try:
+        energy_value = float(np.real_if_close(energy))
+    except (TypeError, ValueError):
+        return None
+    state_array = np.asarray(state, dtype=np.complex128).reshape(-1)
+    return energy_value, state_array, dict(info)
 
 
 def _collect_df_rz_layer_metrics(costs: dict[str, object]) -> dict[str, int]:
@@ -2122,6 +3335,13 @@ def df_trotter_energy_error_curve(
     ccsd_thresh_range: Sequence[float] | None = None,
     ccsd_use_kernel: bool = False,
     ccsd_no_triples: bool = False,
+    df_sector_solver: str = "eigsh",
+    df_sector_solver_tol: float = 1e-10,
+    df_sector_solver_maxiter: int | None = None,
+    df_sector_davidson_eps: float = 1e-8,
+    df_sector_davidson_max_subspace: int = 80,
+    df_sector_davidson_max_iterations: int = 200,
+    df_sector_matrix_free: bool = False,
 ) -> tuple[list[float], list[float]] | tuple[list[float], list[float], dict[str, object]]:
     pf_label = normalize_pf_label(pf_label)
     if t_step <= 0:
@@ -2146,6 +3366,8 @@ def df_trotter_energy_error_curve(
             "reference must be 'exact', 'df', 'df_fci', or 'df_sector' "
             "for expectation estimator."
         )
+    if df_sector_solver not in ("eigsh", "davidson"):
+        raise ValueError("df_sector_solver must be 'eigsh' or 'davidson'.")
     if rank is None and rank_fraction is None and ccsd_target_error_ha is None:
         config_rank_fraction = get_df_rank_fraction_for_molecule(int(molecule_type))
         if config_rank_fraction is not None:
@@ -2312,28 +3534,96 @@ def df_trotter_energy_error_curve(
             energy_sparse_ref, psi_sparse_ref = _ground_state_from_sparse(h_df_sparse)
             energy_ref, psi0 = energy_sparse_ref, psi_sparse_ref
         elif reference == "df_sector":
-            h_df_sparse = _effective_df_hamiltonian_sparse(
-                constant, one_body_spin, model
-            )
-            (
-                energy_sector_ref,
-                psi_sector_ref,
-                sector_info,
-            ) = _ground_state_from_sparse_physical_sector(
-                h_df_sparse,
-                molecule_type=molecule_type,
+            sector_info = _physical_sector_metadata(
+                molecule_type,
                 distance=distance,
                 basis=basis,
                 n_qubits=model.N,
             )
+            ground_state_artifact_name = _df_sector_ground_state_artifact_name(
+                int(molecule_type),
+                distance=distance,
+                basis=basis,
+                rank=rank,
+                rank_fraction=rank_fraction,
+                tol=tol,
+            )
+            cached_ground_state = (
+                _load_df_ground_state_artifact(ground_state_artifact_name)
+                if df_sector_ground_state_cache
+                else None
+            )
+            if cached_ground_state is not None:
+                energy_sector_ref, psi_sector_ref, cached_info = cached_ground_state
+                sector_info.update(cached_info)
+                sector_info["artifact_name"] = ground_state_artifact_name
+                sector_info["loaded_from_artifact"] = True
+            else:
+                if df_sector_matrix_free and df_sector_solver == "eigsh":
+                    linear_operator, basis_indices, operator_info = _build_df_sector_matrix_free_operator(
+                        constant,
+                        one_body_spin,
+                        model,
+                        nelec_alpha=int(sector_info["nelec_alpha"]),
+                        nelec_beta=int(sector_info["nelec_beta"]),
+                    )
+                    (
+                        energy_sector_ref,
+                        psi_sector_ref,
+                        solve_info,
+                    ) = _ground_state_from_matrix_free_operator(
+                        linear_operator,
+                        basis_indices=basis_indices,
+                        full_dim=2**model.N,
+                        solver_tol=df_sector_solver_tol,
+                        solver_maxiter=df_sector_solver_maxiter,
+                    )
+                    solve_info = {**operator_info, **solve_info}
+                else:
+                    restricted_sparse, basis_indices, _ = _effective_df_hamiltonian_sector_sparse(
+                        constant,
+                        one_body_spin,
+                        model,
+                        nelec_alpha=int(sector_info["nelec_alpha"]),
+                        nelec_beta=int(sector_info["nelec_beta"]),
+                    )
+                    (
+                        energy_sector_ref,
+                        psi_sector_ref,
+                        solve_info,
+                    ) = _ground_state_from_restricted_sparse(
+                        restricted_sparse,
+                        basis_indices=basis_indices,
+                        full_dim=2**model.N,
+                        solver=df_sector_solver,
+                        solver_tol=df_sector_solver_tol,
+                        solver_maxiter=df_sector_solver_maxiter,
+                        davidson_eps=df_sector_davidson_eps,
+                        davidson_max_subspace=df_sector_davidson_max_subspace,
+                        davidson_max_iterations=df_sector_davidson_max_iterations,
+                    )
+                sector_info.update(solve_info)
+                sector_info["artifact_name"] = ground_state_artifact_name
+                if df_sector_ground_state_cache:
+                    _save_df_ground_state_artifact(
+                        ground_state_artifact_name,
+                        {
+                            "energy": float(np.real_if_close(energy_sector_ref)),
+                            "state": psi_sector_ref,
+                            "info": sector_info,
+                        },
+                    )
             energy_ref, psi0 = energy_sector_ref, psi_sector_ref
             if debug:
+                loaded_flag = bool(sector_info.get("loaded_from_artifact", False))
                 debug_print(
                     "df_sector reference: "
                     f"na={int(sector_info['nelec_alpha'])} "
                     f"nb={int(sector_info['nelec_beta'])} "
                     f"sector_dim={int(sector_info['sector_dim'])} "
-                    f"full_dim={int(sector_info['full_dim'])}"
+                    f"full_dim={int(sector_info['full_dim'])} "
+                    f"restricted_nnz={sector_info['restricted_nnz']} "
+                    f"loaded={loaded_flag}"
                 )
         else:
             h_df_sparse = _effective_df_hamiltonian_sparse(
@@ -2905,6 +4195,14 @@ def df_trotter_energy_error_plot(
     ccsd_thresh_range: Sequence[float] | None = None,
     ccsd_use_kernel: bool = False,
     ccsd_no_triples: bool = False,
+    df_sector_solver: str = "eigsh",
+    df_sector_solver_tol: float = 1e-10,
+    df_sector_solver_maxiter: int | None = None,
+    df_sector_davidson_eps: float = 1e-8,
+    df_sector_davidson_max_subspace: int = 80,
+    df_sector_davidson_max_iterations: int = 200,
+    df_sector_matrix_free: bool = False,
+    df_sector_ground_state_cache: bool = True,
     save_fit_params: bool = True,
     save_rz_layers: bool = False,
     artifact_suffix: str = "",
@@ -2945,6 +4243,14 @@ def df_trotter_energy_error_plot(
         ccsd_thresh_range=ccsd_thresh_range,
         ccsd_use_kernel=ccsd_use_kernel,
         ccsd_no_triples=ccsd_no_triples,
+        df_sector_solver=df_sector_solver,
+        df_sector_solver_tol=df_sector_solver_tol,
+        df_sector_solver_maxiter=df_sector_solver_maxiter,
+        df_sector_davidson_eps=df_sector_davidson_eps,
+        df_sector_davidson_max_subspace=df_sector_davidson_max_subspace,
+        df_sector_davidson_max_iterations=df_sector_davidson_max_iterations,
+        df_sector_matrix_free=df_sector_matrix_free,
+        df_sector_ground_state_cache=df_sector_ground_state_cache,
     )
     if len(result) == 3:
         times, errors, costs = result  # type: ignore[misc]
@@ -3240,6 +4546,14 @@ def df_trotter_energy_error_curve_sector(
     ccsd_thresh_range: Sequence[float] | None = None,
     ccsd_use_kernel: bool = False,
     ccsd_no_triples: bool = False,
+    df_sector_solver: str = "eigsh",
+    df_sector_solver_tol: float = 1e-10,
+    df_sector_solver_maxiter: int | None = None,
+    df_sector_davidson_eps: float = 1e-8,
+    df_sector_davidson_max_subspace: int = 80,
+    df_sector_davidson_max_iterations: int = 200,
+    df_sector_matrix_free: bool = False,
+    df_sector_ground_state_cache: bool = True,
 ) -> tuple[list[float], list[float]] | tuple[list[float], list[float], dict[str, object]]:
     """DF Trotter error using sparse eigsh on the physical (N_alpha, N_beta) sector."""
     return df_trotter_energy_error_curve(
@@ -3269,6 +4583,14 @@ def df_trotter_energy_error_curve_sector(
         ccsd_thresh_range=ccsd_thresh_range,
         ccsd_use_kernel=ccsd_use_kernel,
         ccsd_no_triples=ccsd_no_triples,
+        df_sector_solver=df_sector_solver,
+        df_sector_solver_tol=df_sector_solver_tol,
+        df_sector_solver_maxiter=df_sector_solver_maxiter,
+        df_sector_davidson_eps=df_sector_davidson_eps,
+        df_sector_davidson_max_subspace=df_sector_davidson_max_subspace,
+        df_sector_davidson_max_iterations=df_sector_davidson_max_iterations,
+        df_sector_matrix_free=df_sector_matrix_free,
+        df_sector_ground_state_cache=df_sector_ground_state_cache,
     )
 
 
@@ -3301,6 +4623,14 @@ def df_trotter_energy_error_plot_sector(
     ccsd_thresh_range: Sequence[float] | None = None,
     ccsd_use_kernel: bool = False,
     ccsd_no_triples: bool = False,
+    df_sector_solver: str = "eigsh",
+    df_sector_solver_tol: float = 1e-10,
+    df_sector_solver_maxiter: int | None = None,
+    df_sector_davidson_eps: float = 1e-8,
+    df_sector_davidson_max_subspace: int = 80,
+    df_sector_davidson_max_iterations: int = 200,
+    df_sector_matrix_free: bool = False,
+    df_sector_ground_state_cache: bool = True,
     save_fit_params: bool = True,
     save_rz_layers: bool = False,
 ) -> tuple[list[float], list[float]] | tuple[list[float], list[float], dict[str, object]]:
@@ -3334,6 +4664,14 @@ def df_trotter_energy_error_plot_sector(
         ccsd_thresh_range=ccsd_thresh_range,
         ccsd_use_kernel=ccsd_use_kernel,
         ccsd_no_triples=ccsd_no_triples,
+        df_sector_solver=df_sector_solver,
+        df_sector_solver_tol=df_sector_solver_tol,
+        df_sector_solver_maxiter=df_sector_solver_maxiter,
+        df_sector_davidson_eps=df_sector_davidson_eps,
+        df_sector_davidson_max_subspace=df_sector_davidson_max_subspace,
+        df_sector_davidson_max_iterations=df_sector_davidson_max_iterations,
+        df_sector_matrix_free=df_sector_matrix_free,
+        df_sector_ground_state_cache=df_sector_ground_state_cache,
         save_fit_params=save_fit_params,
         save_rz_layers=save_rz_layers,
         artifact_suffix="_df_sector",
@@ -3341,6 +4679,7 @@ def df_trotter_energy_error_plot_sector(
 
 
 __all__ = [
+    "df_ground_state_physical_sector",
     "df_trotter_energy_error_curve",
     "df_trotter_energy_error_plot",
     "df_trotter_energy_error_curve_sector",
