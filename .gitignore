@@ -20,3 +20,4 @@ jupyter.log
 artifacts/df_ground_state
 surface_code
 artifacts/surface_code_cache
+artifacts/surface_code_step_gr

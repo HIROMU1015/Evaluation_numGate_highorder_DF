@@ -35,6 +35,7 @@ def test_attach_df_surface_code_step_metrics_updates_payload(
     monkeypatch,
 ) -> None:
     monkeypatch.setattr(ce, "PICKLE_DIR_DF_PATH", tmp_path)
+    monkeypatch.setattr(ce, "surface_code_step_dir", lambda *args, **kwargs: tmp_path / "surface")
 
     target = tmp_path / "H3_test_Operator_2nd"
     with target.open("wb") as f:
@@ -50,28 +51,29 @@ def test_attach_df_surface_code_step_metrics_updates_payload(
 
     stored = ce.attach_df_surface_code_step_metrics("H3_test", "2nd", metrics)
 
-    with target.open("rb") as f:
+    with (tmp_path / "surface" / "H3_test_Operator_2nd").open("rb") as f:
         payload = pickle.load(f)
+    with target.open("rb") as f:
+        original_payload = pickle.load(f)
 
     assert stored["magic_state_consumption_count"] == 10
     assert payload["surface_code_step"]["runtime"] == 25
     assert payload["surface_code_step"]["qubit_volume"] == 80
     assert len(payload["surface_code_step_cache"]) == 1
-    assert payload["expo"] == 2.0
+    assert original_payload["expo"] == 2.0
+    assert "surface_code_step" not in original_payload
 
 
 def test_attach_grouped_surface_code_step_metrics_updates_payload(
     tmp_path,
     monkeypatch,
 ) -> None:
-    monkeypatch.setattr(ce, "pickle_dir", lambda *args, **kwargs: tmp_path)
+    monkeypatch.setattr(ce, "surface_code_step_dir", lambda *args, **kwargs: tmp_path / "surface")
     monkeypatch.setattr(
         ce,
         "_load_grouped_artifact_payload",
         lambda *args, **kwargs: {"coeff": 1.0e-3},
     )
-
-    target = tmp_path / "H3_test_Operator_2nd"
 
     metrics = {
         "magic_state_consumption_count": 12,
@@ -83,14 +85,42 @@ def test_attach_grouped_surface_code_step_metrics_updates_payload(
 
     stored = ce.attach_grouped_surface_code_step_metrics("H3_test", "2nd", metrics)
 
-    with target.open("rb") as f:
+    with (tmp_path / "surface" / "H3_test_Operator_2nd").open("rb") as f:
         payload = pickle.load(f)
 
     assert stored["magic_state_consumption_count"] == 12
     assert payload["surface_code_step"]["runtime"] == 28
     assert payload["surface_code_step"]["qubit_volume"] == 90
     assert len(payload["surface_code_step_cache"]) == 1
-    assert payload["coeff"] == 1.0e-3
+
+
+def test_load_surface_code_artifact_payload_falls_back_to_legacy_embedded_cache(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        ce,
+        "surface_code_step_dir",
+        lambda *args, **kwargs: Path("/nonexistent/surface"),
+    )
+    monkeypatch.setattr(
+        ce,
+        "_load_grouped_artifact_payload",
+        lambda *args, **kwargs: {
+            "coeff": 1.0e-3,
+            "surface_code_step": {
+                "magic_state_consumption_count": 12,
+                "magic_state_consumption_depth": 8,
+                "runtime": 28,
+                "runtime_without_topology": 24,
+                "qubit_volume": 90,
+            },
+        },
+    )
+
+    payload = ce._load_surface_code_artifact_payload("H3_test", "2nd", source="gr")
+
+    assert payload["surface_code_step"]["runtime"] == 28
+    assert "coeff" not in payload
 
 
 def test_load_surface_code_step_metrics_uses_target_error_cache(
@@ -422,6 +452,75 @@ def test_surface_code_proxy_step_metrics_grouped(monkeypatch) -> None:
     assert metrics["compile_mode"] == "proxy"
 
 
+def test_surface_code_ir_summary_from_opt_json(tmp_path) -> None:
+    opt_path = tmp_path / "step_opt.json"
+    opt_path.write_text(
+        (
+            "{"
+            '"circuit_list":['
+            '{'
+            '"name":"main",'
+            '"argument":{"num_qubits":2},'
+            '"bb_list":[{"inst_list":['
+            '{"opcode":"Call","callee":"rot","operate":[0],"input":[],"output":[]},'
+            '{"opcode":"CX","q0":0,"q1":1},'
+            '{"opcode":"Call","callee":"rot","operate":[1],"input":[],"output":[]},'
+            '{"opcode":"Return"}'
+            "]}]"
+            "},"
+            '{'
+            '"name":"rot",'
+            '"argument":{"num_qubits":1},'
+            '"bb_list":[{"inst_list":['
+            '{"opcode":"H","q":0},'
+            '{"opcode":"T","q":0},'
+            '{"opcode":"H","q":0},'
+            '{"opcode":"Return"}'
+            "]}]"
+            "}"
+            "]"
+            "}"
+        ),
+        encoding="utf-8",
+    )
+
+    summary = ce._surface_code_ir_summary_from_opt_json(opt_path)
+
+    assert summary["magic_count"] == 2
+    assert summary["magic_depth"] == 2
+    assert summary["gate_count"] == 7
+    assert summary["gate_depth"] == 7
+
+
+def test_surface_code_ir_summary_from_opt_json_ignores_identity(tmp_path) -> None:
+    opt_path = tmp_path / "step_opt.json"
+    opt_path.write_text(
+        (
+            "{"
+            '"circuit_list":['
+            '{'
+            '"name":"main",'
+            '"argument":{"num_qubits":1},'
+            '"bb_list":[{"inst_list":['
+            '{"opcode":"I","q":0},'
+            '{"opcode":"T","q":0},'
+            '{"opcode":"Return"}'
+            "]}]"
+            "}"
+            "]"
+            "}"
+        ),
+        encoding="utf-8",
+    )
+
+    summary = ce._surface_code_ir_summary_from_opt_json(opt_path)
+
+    assert summary["magic_count"] == 1
+    assert summary["magic_depth"] == 1
+    assert summary["gate_count"] == 1
+    assert summary["gate_depth"] == 1
+
+
 def test_generate_surface_code_step_metrics_proxy_skips_qcsf(
     monkeypatch,
 ) -> None:
@@ -460,6 +559,92 @@ def test_generate_surface_code_step_metrics_proxy_skips_qcsf(
 
     assert metrics["generator"] == "proxy_formula"
     assert metrics["magic_state_consumption_count"] == 100
+
+
+def test_generate_surface_code_step_metrics_decompose_only_skips_compile(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    monkeypatch.setattr(ce, "SURFACE_CODE_COMPILE_MODE", "decompose_only")
+    qcsf = tmp_path / "qcsf"
+    qcsf.write_text("", encoding="utf-8")
+    topo = tmp_path / "topology.yaml"
+    topo.write_text("", encoding="utf-8")
+    monkeypatch.setattr(ce, "SURFACE_CODE_QCSF_PATH", qcsf)
+    monkeypatch.setattr(ce, "SURFACE_CODE_TOPOLOGY_PATH", topo)
+    monkeypatch.setattr(ce, "_surface_code_step_time", lambda *args, **kwargs: 0.25)
+    monkeypatch.setattr(
+        ce,
+        "_surface_code_rotation_precision",
+        lambda *args, **kwargs: 1.0e-5,
+    )
+    monkeypatch.setattr(
+        ce,
+        "_build_grouped_surface_code_step_circuit",
+        lambda *args, **kwargs: object(),
+    )
+    monkeypatch.setattr(
+        ce,
+        "_surface_code_runtime_root",
+        lambda *args, **kwargs: tmp_path,
+    )
+    monkeypatch.setattr(
+        ce,
+        "_surface_code_qasm_text_from_circuit",
+        lambda *args, **kwargs: "OPENQASM 2.0;",
+    )
+
+    calls: list[str] = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd[1])
+
+    monkeypatch.setattr(ce, "_run_surface_code_command_logged", fake_run)
+    monkeypatch.setattr(ce, "_ensure_surface_code_binary_usable", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        ce,
+        "_surface_code_decompose_only_step_metrics",
+        lambda *args, **kwargs: {
+            "magic_state_consumption_count": 100,
+            "magic_state_consumption_depth": 80,
+            "runtime": 123,
+            "runtime_without_topology": 123,
+            "qubit_volume": 0,
+            "target_error": 1.0e-3,
+            "step_time": 0.25,
+            "rotation_precision": 1.0e-5,
+            "generator": "decompose_only_ir",
+            "compile_mode": "decompose_only",
+        },
+    )
+
+    metrics = ce._generate_surface_code_step_metrics(
+        "H3_dummy",
+        "2nd",
+        source="gr",
+        target_error=1.0e-3,
+    )
+
+    assert calls == ["parse", "opt"]
+    assert metrics["generator"] == "decompose_only_ir"
+    assert metrics["runtime_without_topology"] == 123
+    opt_yaml_text = (tmp_path / "opt.yaml").read_text(encoding="utf-8")
+    assert "- ir::decompose_inst" in opt_yaml_text
+    assert "- ir::recursive_inliner" not in opt_yaml_text
+    assert "- ir::static_condition_pruning" not in opt_yaml_text
+
+
+def test_surface_code_opt_passes_lightweight_include_compile_shortcuts(monkeypatch) -> None:
+    monkeypatch.setattr(ce, "SURFACE_CODE_COMPILE_MODE", "lightweight")
+
+    passes = ce._surface_code_opt_passes()
+
+    assert passes[:4] == [
+        "ir::recursive_inliner",
+        "ir::static_condition_pruning",
+        "ir::decompose_inst",
+        "ir::ignore_global_phase",
+    ]
 
 
 def test_match_surface_code_step_metrics_respects_cache_key(monkeypatch) -> None:

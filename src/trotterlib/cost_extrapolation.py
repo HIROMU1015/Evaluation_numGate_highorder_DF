@@ -50,6 +50,8 @@ from .config import (
     SURFACE_CODE_CACHE_DIR,
     SURFACE_CODE_CODE_DISTANCE_CANDIDATES,
     SURFACE_CODE_COMPILE_MODE,
+    SURFACE_CODE_COMPILE_SKIP_OUTPUT,
+    SURFACE_CODE_COMPILE_SKIP_REDUNDANT_IR_PREPROCESS,
     SURFACE_CODE_DELTA_FAIL_CASES,
     SURFACE_CODE_ENTANGLEMENT_GENERATION_PERIOD,
     SURFACE_CODE_MACHINE_TYPE,
@@ -62,6 +64,9 @@ from .config import (
     SURFACE_CODE_QASM_DECOMPOSE_REPS,
     SURFACE_CODE_QCSF_PATH,
     SURFACE_CODE_GRIDSYNTH_PATH,
+    SURFACE_CODE_STEP_DF_PATH,
+    SURFACE_CODE_STEP_GROUPED_ORIGINAL_PATH,
+    SURFACE_CODE_STEP_GROUPED_PATH,
     SURFACE_CODE_DF_ROTATION_LAYER_PREFERRED_KEY,
     SURFACE_CODE_PROXY_DEPTH_MULTIPLIER,
     SURFACE_CODE_PROXY_GATE_COUNT_PER_MAGIC,
@@ -73,6 +78,7 @@ from .config import (
     SURFACE_CODE_REACTION_TIME,
     SURFACE_CODE_RUNTIME_METRIC,
     SURFACE_CODE_TOPOLOGY_PATH,
+    surface_code_step_dir,
 )
 
 from .io_cache import load_data, label_replace
@@ -1131,6 +1137,291 @@ def _surface_code_proxy_step_metrics(
     )
 
 
+_SURFACE_CODE_MAXPLUS_NEG_INF = -(10**15)
+
+
+def _surface_code_maxplus_identity(size: int) -> List[List[int]]:
+    return [
+        [0 if i == j else _SURFACE_CODE_MAXPLUS_NEG_INF for j in range(size)]
+        for i in range(size)
+    ]
+
+
+def _surface_code_maxplus_compose(
+    lhs: Sequence[Sequence[int]],
+    rhs: Sequence[Sequence[int]],
+) -> List[List[int]]:
+    size = len(lhs)
+    out = [
+        [_SURFACE_CODE_MAXPLUS_NEG_INF for _ in range(size)]
+        for _ in range(size)
+    ]
+    for i in range(size):
+        for k in range(size):
+            lhs_ik = int(lhs[i][k])
+            if lhs_ik <= _SURFACE_CODE_MAXPLUS_NEG_INF // 2:
+                continue
+            row = rhs[k]
+            for j in range(size):
+                rhs_kj = int(row[j])
+                if rhs_kj <= _SURFACE_CODE_MAXPLUS_NEG_INF // 2:
+                    continue
+                candidate = lhs_ik + rhs_kj
+                if candidate > out[i][j]:
+                    out[i][j] = candidate
+    return out
+
+
+def _surface_code_maxplus_depth(matrix: Sequence[Sequence[int]]) -> int:
+    best = 0
+    for row in matrix:
+        for value in row:
+            if value > best:
+                best = int(value)
+    return best
+
+
+def _surface_code_one_qubit_transfer(
+    size: int,
+    qubit: int,
+    *,
+    weight: int,
+) -> List[List[int]]:
+    out = _surface_code_maxplus_identity(size)
+    out[int(qubit)][int(qubit)] = int(weight)
+    return out
+
+
+def _surface_code_two_qubit_clifford_transfer(
+    size: int,
+    q0: int,
+    q1: int,
+    *,
+    weight: int,
+) -> List[List[int]]:
+    q0 = int(q0)
+    q1 = int(q1)
+    out = _surface_code_maxplus_identity(size)
+    for out_qubit in (q0, q1):
+        for row in range(size):
+            out[row][out_qubit] = _SURFACE_CODE_MAXPLUS_NEG_INF
+        out[q0][out_qubit] = int(weight)
+        out[q1][out_qubit] = int(weight)
+    return out
+
+
+def _surface_code_embed_call_transfer(
+    size: int,
+    operate: Sequence[int],
+    submatrix: Sequence[Sequence[int]],
+) -> List[List[int]]:
+    out = _surface_code_maxplus_identity(size)
+    local = [int(q) for q in operate]
+    for local_out, outer_out in enumerate(local):
+        for row in range(size):
+            out[row][outer_out] = _SURFACE_CODE_MAXPLUS_NEG_INF
+        for local_in, outer_in in enumerate(local):
+            out[outer_in][outer_out] = int(submatrix[local_in][local_out])
+    return out
+
+
+def _surface_code_ir_summary_from_opt_json(
+    opt_ir_path: str | Path,
+    *,
+    circuit_name: str = "main",
+) -> Dict[str, Any]:
+    """qcsf opt 後の IR から分解済み T-count/T-depth を高速計算する。"""
+    path = Path(opt_ir_path).expanduser().resolve()
+    with path.open("r", encoding="utf-8") as f:
+        module = json.load(f)
+
+    circuits_raw = module.get("circuit_list")
+    if not isinstance(circuits_raw, list):
+        raise ValueError(f"Invalid IR JSON: missing circuit_list in {path}")
+
+    circuit_map: Dict[str, Mapping[str, Any]] = {}
+    for circuit in circuits_raw:
+        if isinstance(circuit, Mapping) and isinstance(circuit.get("name"), str):
+            circuit_map[str(circuit["name"])] = circuit
+
+    if circuit_name not in circuit_map:
+        raise ValueError(f"Circuit '{circuit_name}' not found in {path}")
+
+    summaries: Dict[str, Dict[str, Any]] = {}
+
+    def _summarize(name: str) -> Dict[str, Any]:
+        cached = summaries.get(name)
+        if cached is not None:
+            return cached
+
+        circuit = circuit_map.get(name)
+        if circuit is None:
+            raise ValueError(f"Unknown callee '{name}' in {path}")
+        argument = circuit.get("argument")
+        if not isinstance(argument, Mapping):
+            raise ValueError(f"Invalid IR JSON: missing argument for circuit '{name}'")
+        num_qubits = int(argument.get("num_qubits", 0))
+
+        magic_matrix = _surface_code_maxplus_identity(num_qubits)
+        gate_matrix = _surface_code_maxplus_identity(num_qubits)
+        magic_count = 0
+        gate_count = 0
+
+        bb_list = circuit.get("bb_list")
+        if not isinstance(bb_list, list):
+            raise ValueError(f"Invalid IR JSON: missing bb_list for circuit '{name}'")
+
+        for bb in bb_list:
+            if not isinstance(bb, Mapping):
+                continue
+            inst_list = bb.get("inst_list")
+            if not isinstance(inst_list, list):
+                continue
+            for inst in inst_list:
+                if not isinstance(inst, Mapping):
+                    continue
+                opcode = str(inst.get("opcode"))
+                if opcode in {"Return", "I"}:
+                    continue
+                if opcode == "Call":
+                    callee = str(inst.get("callee"))
+                    child = _summarize(callee)
+                    operate = inst.get("operate")
+                    if not isinstance(operate, list):
+                        raise ValueError(
+                            f"Invalid Call instruction in circuit '{name}': missing operate"
+                        )
+                    magic_matrix = _surface_code_maxplus_compose(
+                        magic_matrix,
+                        _surface_code_embed_call_transfer(
+                            num_qubits,
+                            operate,
+                            child["magic_matrix"],
+                        ),
+                    )
+                    gate_matrix = _surface_code_maxplus_compose(
+                        gate_matrix,
+                        _surface_code_embed_call_transfer(
+                            num_qubits,
+                            operate,
+                            child["gate_matrix"],
+                        ),
+                    )
+                    magic_count += int(child["magic_count"])
+                    gate_count += int(child["gate_count"])
+                    continue
+                if opcode in {"H", "S", "SDag", "X", "Z"}:
+                    q = int(inst["q"])
+                    magic_matrix = _surface_code_maxplus_compose(
+                        magic_matrix,
+                        _surface_code_one_qubit_transfer(num_qubits, q, weight=0),
+                    )
+                    gate_matrix = _surface_code_maxplus_compose(
+                        gate_matrix,
+                        _surface_code_one_qubit_transfer(num_qubits, q, weight=1),
+                    )
+                    gate_count += 1
+                    continue
+                if opcode in {"T", "TDag"}:
+                    q = int(inst["q"])
+                    magic_matrix = _surface_code_maxplus_compose(
+                        magic_matrix,
+                        _surface_code_one_qubit_transfer(num_qubits, q, weight=1),
+                    )
+                    gate_matrix = _surface_code_maxplus_compose(
+                        gate_matrix,
+                        _surface_code_one_qubit_transfer(num_qubits, q, weight=1),
+                    )
+                    magic_count += 1
+                    gate_count += 1
+                    continue
+                if opcode == "CX":
+                    q0 = int(inst["q0"])
+                    q1 = int(inst["q1"])
+                    magic_matrix = _surface_code_maxplus_compose(
+                        magic_matrix,
+                        _surface_code_two_qubit_clifford_transfer(
+                            num_qubits,
+                            q0,
+                            q1,
+                            weight=0,
+                        ),
+                    )
+                    gate_matrix = _surface_code_maxplus_compose(
+                        gate_matrix,
+                        _surface_code_two_qubit_clifford_transfer(
+                            num_qubits,
+                            q0,
+                            q1,
+                            weight=1,
+                        ),
+                    )
+                    gate_count += 1
+                    continue
+                raise ValueError(
+                    f"Unsupported opcode '{opcode}' in decomposed IR circuit '{name}'"
+                )
+
+        summary = {
+            "num_qubits": num_qubits,
+            "magic_count": int(magic_count),
+            "magic_depth": int(_surface_code_maxplus_depth(magic_matrix)),
+            "magic_matrix": magic_matrix,
+            "gate_count": int(gate_count),
+            "gate_depth": int(_surface_code_maxplus_depth(gate_matrix)),
+            "gate_matrix": gate_matrix,
+        }
+        summaries[name] = summary
+        return summary
+
+    return _summarize(circuit_name)
+
+
+def _surface_code_decompose_only_step_metrics(
+    opt_ir_path: str | Path,
+    *,
+    ham_name: str,
+    pf_label: PFLabel,
+    source: str,
+    target_error: float,
+    step_time: float,
+    rotation_precision: float,
+) -> Dict[str, Any]:
+    """surface_code の parse+opt のみを用いた高速 step metrics。"""
+    summary = _surface_code_ir_summary_from_opt_json(opt_ir_path, circuit_name="main")
+    gate_count = int(summary["gate_count"])
+    gate_depth = int(summary["gate_depth"])
+    magic_count = int(summary["magic_count"])
+    magic_depth = int(summary["magic_depth"])
+    runtime_wo = max(gate_count, gate_depth)
+    metrics = {
+        "magic_state_consumption_count": magic_count,
+        "magic_state_consumption_depth": magic_depth,
+        "runtime": runtime_wo,
+        "runtime_without_topology": runtime_wo,
+        "qubit_volume": 0,
+        "gate_count": gate_count,
+        "gate_depth": gate_depth,
+        "measurement_feedback_count": magic_count,
+        "measurement_feedback_depth": magic_depth,
+        "magic_factory_count": 0,
+        "chip_cell_count": 0,
+        "target_error": float(target_error),
+        "step_time": float(step_time),
+        "rotation_precision": float(rotation_precision),
+        "cache_key": _surface_code_cache_key(float(target_error)),
+        "generator": "decompose_only_ir",
+        "auto_generated": True,
+        "source": str(source),
+        "compile_mode": SURFACE_CODE_COMPILE_MODE,
+        "compile_info_json": str(Path(opt_ir_path).expanduser().resolve()),
+    }
+    return normalize_surface_code_step_metrics(
+        metrics,
+        context=f"{ham_name}_Operator_{pf_label}.decompose_only_surface_code_step",
+    )
+
+
 def _surface_code_rotation_precision(
     ham_name: str,
     pf_label: PFLabel,
@@ -1373,7 +1664,36 @@ def _prepare_surface_code_runtime_env(
         env["GRIDSYNTH_PATH"] = str(gridsynth_path)
     if rotation_precision is not None:
         env["QSVT_OPENQASM_ROTATION_PRECISION"] = f"{float(rotation_precision):.17g}"
+    if (
+        SURFACE_CODE_COMPILE_MODE not in {"proxy", "decompose_only"}
+        and SURFACE_CODE_COMPILE_SKIP_REDUNDANT_IR_PREPROCESS
+    ):
+        env["QSVT_COMPILE_SKIP_IR_PREPROCESS"] = "1"
+    if (
+        SURFACE_CODE_COMPILE_MODE not in {"proxy", "decompose_only"}
+        and SURFACE_CODE_COMPILE_SKIP_OUTPUT
+    ):
+        env["QSVT_COMPILE_SKIP_OUTPUT"] = "1"
     return env
+
+
+def _surface_code_opt_passes() -> List[str]:
+    """現在の compile mode に応じた qcsf opt pass 列を返す。"""
+    if SURFACE_CODE_COMPILE_MODE == "decompose_only":
+        return [
+            "ir::decompose_inst",
+            "ir::ignore_global_phase",
+            "ir::delete_consecutive_same_pauli",
+            "ir::delete_opt_hint",
+        ]
+    return [
+        "ir::recursive_inliner",
+        "ir::static_condition_pruning",
+        "ir::decompose_inst",
+        "ir::ignore_global_phase",
+        "ir::delete_consecutive_same_pauli",
+        "ir::delete_opt_hint",
+    ]
 
 
 def _parse_molecule_type_from_ham_name(ham_name: str) -> int:
@@ -1451,11 +1771,7 @@ def _surface_code_artifact_path(
 ) -> Path:
     """surface_code step metrics を保存する artifact パスを返す。"""
     artifact_name = f"{ham_name}_Operator_{pf_label}"
-    if source == "df":
-        return PICKLE_DIR_DF_PATH / artifact_name
-    if source == "gr":
-        return pickle_dir(True, use_original=use_original) / artifact_name
-    raise ValueError(f"Unsupported source: {source}")
+    return surface_code_step_dir(source, use_original=use_original) / artifact_name
 
 
 def _attach_surface_code_step_metrics(
@@ -1468,16 +1784,12 @@ def _attach_surface_code_step_metrics(
 ) -> Dict[str, Any]:
     """artifact に surface_code step metrics を保存する。"""
     artifact_name = f"{ham_name}_Operator_{pf_label}"
-    if source == "df":
-        payload = _load_df_artifact_payload(ham_name, pf_label)
-    elif source == "gr":
-        payload = _load_grouped_artifact_payload(
-            ham_name,
-            pf_label,
-            use_original=use_original,
-        )
-    else:
-        raise ValueError(f"Unsupported source: {source}")
+    payload = _load_surface_code_artifact_payload(
+        ham_name,
+        pf_label,
+        source=source,
+        use_original=use_original,
+    )
     metrics_with_mode = dict(metrics)
     metrics_with_mode.setdefault("compile_mode", SURFACE_CODE_COMPILE_MODE)
     normalized = normalize_surface_code_step_metrics(
@@ -1579,6 +1891,40 @@ def attach_grouped_surface_code_step_metrics_from_compile_info_json(
     )
 
 
+def _extract_surface_code_payload_fields(payload: Mapping[str, Any]) -> Dict[str, Any]:
+    """surface_code 関連キーだけを payload から抜き出す。"""
+    extracted: Dict[str, Any] = {}
+    if "surface_code_step" in payload:
+        extracted["surface_code_step"] = payload["surface_code_step"]
+    if "surface_code_step_cache" in payload:
+        extracted["surface_code_step_cache"] = payload["surface_code_step_cache"]
+    return extracted
+
+
+def _load_surface_code_legacy_payload(
+    ham_name: str,
+    pf_label: PFLabel,
+    *,
+    source: str,
+    use_original: bool = False,
+) -> Dict[str, Any]:
+    """旧 trotter_expo_coeff artifact に埋め込まれた surface_code cache を読む。"""
+    try:
+        if source == "df":
+            payload = _load_df_artifact_payload(ham_name, pf_label)
+        elif source == "gr":
+            payload = _load_grouped_artifact_payload(
+                ham_name,
+                pf_label,
+                use_original=use_original,
+            )
+        else:
+            raise ValueError(f"Unsupported source: {source}")
+    except Exception:
+        return {}
+    return _extract_surface_code_payload_fields(payload)
+
+
 def _load_surface_code_artifact_payload(
     ham_name: str,
     pf_label: PFLabel,
@@ -1587,15 +1933,24 @@ def _load_surface_code_artifact_payload(
     use_original: bool = False,
 ) -> Dict[str, Any]:
     """surface_code step metrics の保存先 payload を読む。"""
-    if source == "df":
-        return _load_df_artifact_payload(ham_name, pf_label)
-    if source == "gr":
-        return _load_grouped_artifact_payload(
-            ham_name,
-            pf_label,
-            use_original=use_original,
-        )
-    raise ValueError(f"Unsupported source: {source}")
+    path = _surface_code_artifact_path(
+        ham_name,
+        pf_label,
+        source=source,
+        use_original=use_original,
+    )
+    if path.exists():
+        with path.open("rb") as f:
+            payload = pickle.load(f)
+        if not isinstance(payload, Mapping):
+            raise ValueError(f"Invalid surface_code artifact payload: {path}")
+        return dict(payload)
+    return _load_surface_code_legacy_payload(
+        ham_name,
+        pf_label,
+        source=source,
+        use_original=use_original,
+    )
 
 
 def _surface_code_step_time(
@@ -1931,9 +2286,6 @@ def _generate_surface_code_step_metrics(
     qcsf_path = Path(SURFACE_CODE_QCSF_PATH).expanduser().resolve()
     if not qcsf_path.exists():
         raise FileNotFoundError(f"surface_code binary not found: {qcsf_path}")
-    topology_path = Path(SURFACE_CODE_TOPOLOGY_PATH).expanduser().resolve()
-    if not topology_path.exists():
-        raise FileNotFoundError(f"surface_code topology file not found: {topology_path}")
     runtime_root = _surface_code_runtime_root(
         ham_name,
         pf_label,
@@ -2014,7 +2366,6 @@ def _generate_surface_code_step_metrics(
     asm_path = runtime_root / "step.asm"
     compile_info_path = runtime_root / "compile_info.json"
     opt_yaml = runtime_root / "opt.yaml"
-    compile_yaml = runtime_root / "compile.yaml"
 
     qasm_path.write_text(qasm_text, encoding="utf-8")
     opt_yaml.write_text(
@@ -2024,35 +2375,7 @@ def _generate_surface_code_step_metrics(
                 "circuit: main",
                 f"output: {opt_path}",
                 "pass:",
-                "- ir::decompose_inst",
-                "- ir::ignore_global_phase",
-                "- ir::delete_consecutive_same_pauli",
-                "- ir::delete_opt_hint",
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
-    compile_yaml.write_text(
-        "\n".join(
-            [
-                "source: IR",
-                f"input: {opt_path}",
-                "circuit: main",
-                "target: FTQC",
-                f"output: {asm_path}",
-                f"ftqc_topology: {topology_path}",
-                f"ftqc_machine_type: {SURFACE_CODE_MACHINE_TYPE}",
-                f"ftqc_magic_generation_period: {int(SURFACE_CODE_MAGIC_GENERATION_PERIOD)}",
-                f"ftqc_maximum_magic_state_stock: {int(SURFACE_CODE_MAX_MAGIC_STATE_STOCK)}",
-                f"ftqc_entanglement_generation_period: {int(SURFACE_CODE_ENTANGLEMENT_GENERATION_PERIOD)}",
-                f"ftqc_maximum_entangled_state_stock: {int(SURFACE_CODE_MAX_ENTANGLED_STATE_STOCK)}",
-                f"ftqc_reaction_time: {int(SURFACE_CODE_REACTION_TIME)}",
-                f"ftqc_dump_compile_info_to_json: {compile_info_path}",
-                "ftqc_pass:",
-                "  - ftqc::init_compile_info",
-                "  - ftqc::calc_info_without_topology",
-                "  - ftqc::dump_compile_info",
+                *[f"- {name}" for name in _surface_code_opt_passes()],
                 "",
             ]
         ),
@@ -2094,6 +2417,53 @@ def _generate_surface_code_step_metrics(
         target_error=target_error,
         stage_name="qcsf opt",
         rotation_precision=rotation_precision,
+    )
+    if SURFACE_CODE_COMPILE_MODE == "decompose_only":
+        _surface_code_log(
+            "using decomposed IR estimator",
+            source=source,
+            ham_name=ham_name,
+            pf_label=pf_label,
+            target_error=target_error,
+        )
+        return _surface_code_decompose_only_step_metrics(
+            opt_path,
+            ham_name=ham_name,
+            pf_label=pf_label,
+            source=source,
+            target_error=float(target_error),
+            step_time=float(step_time),
+            rotation_precision=float(rotation_precision),
+        )
+
+    topology_path = Path(SURFACE_CODE_TOPOLOGY_PATH).expanduser().resolve()
+    if not topology_path.exists():
+        raise FileNotFoundError(f"surface_code topology file not found: {topology_path}")
+    compile_yaml = runtime_root / "compile.yaml"
+    compile_yaml.write_text(
+        "\n".join(
+            [
+                "source: IR",
+                f"input: {opt_path}",
+                "circuit: main",
+                "target: FTQC",
+                f"output: {asm_path}",
+                f"ftqc_topology: {topology_path}",
+                f"ftqc_machine_type: {SURFACE_CODE_MACHINE_TYPE}",
+                f"ftqc_magic_generation_period: {int(SURFACE_CODE_MAGIC_GENERATION_PERIOD)}",
+                f"ftqc_maximum_magic_state_stock: {int(SURFACE_CODE_MAX_MAGIC_STATE_STOCK)}",
+                f"ftqc_entanglement_generation_period: {int(SURFACE_CODE_ENTANGLEMENT_GENERATION_PERIOD)}",
+                f"ftqc_maximum_entangled_state_stock: {int(SURFACE_CODE_MAX_ENTANGLED_STATE_STOCK)}",
+                f"ftqc_reaction_time: {int(SURFACE_CODE_REACTION_TIME)}",
+                f"ftqc_dump_compile_info_to_json: {compile_info_path}",
+                "ftqc_pass:",
+                "  - ftqc::init_compile_info",
+                "  - ftqc::calc_info_without_topology",
+                "  - ftqc::dump_compile_info",
+                "",
+            ]
+        ),
+        encoding="utf-8",
     )
     _run_surface_code_command_logged(
         [

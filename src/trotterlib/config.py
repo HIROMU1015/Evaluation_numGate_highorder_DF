@@ -36,6 +36,9 @@ PICKLE_DIR_GROUPED_ORIGINAL = "trotter_expo_coeff_gr_original"
 PICKLE_DIR_DF = "trotter_expo_coeff_df"
 PICKLE_DIR_DF_GROUND_STATE = "df_ground_state"
 PICKLE_DIR_DF_RZ_LAYER = "df_rz_layer"
+SURFACE_CODE_STEP_DIR_GROUPED = "surface_code_step_gr"
+SURFACE_CODE_STEP_DIR_GROUPED_ORIGINAL = "surface_code_step_gr_original"
+SURFACE_CODE_STEP_DIR_DF = "surface_code_step_df"
 
 # 実際に使う Path（ここを保存/読込の基準にする）
 PICKLE_DIR_PATH = ARTIFACTS_DIR / PICKLE_DIR
@@ -44,6 +47,9 @@ PICKLE_DIR_GROUPED_ORIGINAL_PATH = ARTIFACTS_DIR / PICKLE_DIR_GROUPED_ORIGINAL
 PICKLE_DIR_DF_PATH = ARTIFACTS_DIR / PICKLE_DIR_DF
 PICKLE_DIR_DF_GROUND_STATE_PATH = ARTIFACTS_DIR / PICKLE_DIR_DF_GROUND_STATE
 PICKLE_DIR_DF_RZ_LAYER_PATH = ARTIFACTS_DIR / PICKLE_DIR_DF_RZ_LAYER
+SURFACE_CODE_STEP_GROUPED_PATH = ARTIFACTS_DIR / SURFACE_CODE_STEP_DIR_GROUPED
+SURFACE_CODE_STEP_GROUPED_ORIGINAL_PATH = ARTIFACTS_DIR / SURFACE_CODE_STEP_DIR_GROUPED_ORIGINAL
+SURFACE_CODE_STEP_DF_PATH = ARTIFACTS_DIR / SURFACE_CODE_STEP_DIR_DF
 
 # もし matrix/ calculation/ も同じ階層に寄せたいなら
 MATRIX_DIR = ARTIFACTS_DIR / "matrix"
@@ -61,6 +67,9 @@ def ensure_artifact_dirs(*, include_pickle_dirs: bool = True) -> None:
                 PICKLE_DIR_DF_PATH,
                 PICKLE_DIR_DF_GROUND_STATE_PATH,
                 PICKLE_DIR_DF_RZ_LAYER_PATH,
+                SURFACE_CODE_STEP_GROUPED_PATH,
+                SURFACE_CODE_STEP_GROUPED_ORIGINAL_PATH,
+                SURFACE_CODE_STEP_DF_PATH,
             ]
         )
     # 必要なら作成
@@ -75,6 +84,19 @@ def pickle_dir(gr: bool | None = None, *, use_original: bool = False) -> Path:
     if use_original:
         return PICKLE_DIR_GROUPED_ORIGINAL_PATH
     return PICKLE_DIR_GROUPED_PATH
+
+
+def surface_code_step_dir(source: str, *, use_original: bool = False) -> Path:
+    """surface_code step artifact の保存先を返す。"""
+    if source == "df":
+        return SURFACE_CODE_STEP_DF_PATH
+    if source == "gr":
+        return (
+            SURFACE_CODE_STEP_GROUPED_ORIGINAL_PATH
+            if use_original
+            else SURFACE_CODE_STEP_GROUPED_PATH
+        )
+    raise ValueError(f"Unsupported source: {source}")
 
 
 # =========================
@@ -111,8 +133,10 @@ SURFACE_CODE_A_EFF_CASES = (0.1, 1.0, 10.0)
 SURFACE_CODE_P_PHYS_CASES = (1.0e-3, 5.0e-4, 1.0e-4)
 SURFACE_CODE_DELTA_FAIL_CASES = (1.0e-2, 1.0e-3)
 SURFACE_CODE_CODE_DISTANCE_CANDIDATES = tuple(range(3, 32, 2))
-SURFACE_CODE_COMPILE_MODE = "proxy"
+SURFACE_CODE_COMPILE_MODE = "decompose_only"
 SURFACE_CODE_RUNTIME_METRIC = "runtime_without_topology"
+SURFACE_CODE_COMPILE_SKIP_REDUNDANT_IR_PREPROCESS = True
+SURFACE_CODE_COMPILE_SKIP_OUTPUT = True
 SURFACE_CODE_ROTATION_PRECISION_MODE = "layer_linear_floor"
 SURFACE_CODE_FIXED_ROTATION_PRECISION = 1.0e-9
 SURFACE_CODE_ROTATION_ERROR_BUDGET_FRACTION = 1.0e-2
