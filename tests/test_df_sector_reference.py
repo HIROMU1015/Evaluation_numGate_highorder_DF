@@ -468,7 +468,13 @@ def test_df_ground_state_physical_sector_saves_and_loads_artifact(monkeypatch, t
 
     assert np.isclose(energy_saved, 1.0)
     assert info_saved["artifact_name"]
-    assert (tmp_path / info_saved["artifact_name"]).exists()
+    artifact_path = tmp_path / info_saved["artifact_name"]
+    assert artifact_path.exists()
+    with artifact_path.open("rb") as f:
+        artifact_data = plot.pickle.load(f)
+    assert "state" not in artifact_data
+    assert np.array_equal(artifact_data["basis_indices"], np.array([3, 6], dtype=np.uint32))
+    assert np.allclose(artifact_data["restricted_state"], np.array([0.0, 1.0], dtype=np.complex128))
 
     monkeypatch.setattr(
         plot,
@@ -564,3 +570,41 @@ def test_df_trotter_energy_error_curve_sector_passes_ground_state_cache(monkeypa
     assert captured["reference"] == "df_sector"
     assert captured["df_sector_ground_state_cache"] is False
     assert result == ([0.1], [0.2])
+
+
+def test_rewrite_df_ground_state_artifacts_compact_rewrites_legacy_format(monkeypatch, tmp_path):
+    monkeypatch.setattr(plot, "PICKLE_DIR_DF_GROUND_STATE_PATH", tmp_path)
+    full_state = np.zeros(8, dtype=np.complex128)
+    full_state[[1, 4]] = np.array([0.6, 0.8], dtype=np.complex128)
+    legacy_path = tmp_path / "legacy_ground_state"
+    with legacy_path.open("wb") as f:
+        plot.pickle.dump(
+            {
+                "energy": -1.25,
+                "state": full_state,
+                "info": {"num_qubits": 3},
+            },
+            f,
+        )
+
+    results = plot.rewrite_df_ground_state_artifacts_compact(
+        file_names=["legacy_ground_state"],
+        debug_print=lambda *_args, **_kwargs: None,
+    )
+
+    assert len(results) == 1
+    result = results[0]
+    assert result["rewritten"] is True
+    assert result["already_compact"] is False
+
+    with legacy_path.open("rb") as f:
+        compact = plot.pickle.load(f)
+
+    assert "state" not in compact
+    assert np.array_equal(compact["basis_indices"], np.array([1, 4], dtype=np.uint32))
+    assert np.allclose(compact["restricted_state"], np.array([0.6, 0.8], dtype=np.complex128))
+
+    energy, state, info = plot._load_df_ground_state_artifact("legacy_ground_state")
+    assert np.isclose(energy, -1.25)
+    assert np.allclose(state, full_state)
+    assert info["num_qubits"] == 3

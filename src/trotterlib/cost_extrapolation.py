@@ -1,11 +1,19 @@
 from __future__ import annotations
 
+import json
 import math
+import os
+import pickle
+import re
+import subprocess
+import time
 from collections import defaultdict
+from pathlib import Path
 from typing import (
     Any,
     DefaultDict,
     Dict,
+    Iterable,
     List,
     Mapping,
     Optional,
@@ -26,11 +34,45 @@ from .config import (
     TARGET_ERROR,
     COLOR_MAP,
     MARKER_MAP,
+    DEFAULT_BASIS,
+    DEFAULT_DISTANCE,
     PFLabel,
     P_DIR,
     DECOMPO_NUM,
     PF_RZ_LAYER,
     PICKLE_DIR_DF_PATH,
+    get_df_rank_fraction_for_molecule,
+    normalize_pf_label,
+    pickle_dir,
+    SURFACE_CODE_AUTO_POPULATE,
+    SURFACE_CODE_A_EFF_CASES,
+    SURFACE_CODE_A_EFF_DEFAULT,
+    SURFACE_CODE_CACHE_DIR,
+    SURFACE_CODE_CODE_DISTANCE_CANDIDATES,
+    SURFACE_CODE_COMPILE_MODE,
+    SURFACE_CODE_DELTA_FAIL_CASES,
+    SURFACE_CODE_ENTANGLEMENT_GENERATION_PERIOD,
+    SURFACE_CODE_MACHINE_TYPE,
+    SURFACE_CODE_MAGIC_GENERATION_PERIOD,
+    SURFACE_CODE_MAX_ENTANGLED_STATE_STOCK,
+    SURFACE_CODE_MAX_MAGIC_STATE_STOCK,
+    SURFACE_CODE_P_PHYS_CASES,
+    SURFACE_CODE_P_TH,
+    SURFACE_CODE_QASM_BASIS_GATES,
+    SURFACE_CODE_QASM_DECOMPOSE_REPS,
+    SURFACE_CODE_QCSF_PATH,
+    SURFACE_CODE_GRIDSYNTH_PATH,
+    SURFACE_CODE_DF_ROTATION_LAYER_PREFERRED_KEY,
+    SURFACE_CODE_PROXY_DEPTH_MULTIPLIER,
+    SURFACE_CODE_PROXY_GATE_COUNT_PER_MAGIC,
+    SURFACE_CODE_PROXY_RUNTIME_PER_MAGIC,
+    SURFACE_CODE_ROTATION_ERROR_BUDGET_FRACTION,
+    SURFACE_CODE_ROTATION_PRECISION_FLOOR,
+    SURFACE_CODE_ROTATION_PRECISION_MODE,
+    SURFACE_CODE_FIXED_ROTATION_PRECISION,
+    SURFACE_CODE_REACTION_TIME,
+    SURFACE_CODE_RUNTIME_METRIC,
+    SURFACE_CODE_TOPOLOGY_PATH,
 )
 
 from .io_cache import load_data, label_replace
@@ -764,6 +806,2337 @@ def _load_df_artifact_payload(ham_name: str, pf_label: PFLabel) -> Dict[str, Any
     if not isinstance(data, dict):
         raise ValueError(f"Invalid DF artifact payload: {path}")
     return data
+
+
+def _artifact_nonnegative_int(value: Any, *, field: str, context: str) -> int:
+    """artifact 値を 0 以上の int に正規化する。"""
+    try:
+        scalar = int(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"Invalid {field}={value!r} in {context}") from exc
+    if scalar < 0:
+        raise ValueError(f"Negative {field}={scalar} in {context}")
+    return scalar
+
+
+def _normalize_positive_scalar_list(
+    values: Iterable[Any],
+    *,
+    field: str,
+) -> List[float]:
+    """候補列を正の float リストへ正規化する。"""
+    normalized: List[float] = []
+    for raw in values:
+        try:
+            scalar = float(raw)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"Invalid {field}={raw!r}") from exc
+        if (not np.isfinite(scalar)) or scalar <= 0:
+            raise ValueError(f"Invalid {field}={scalar!r}")
+        normalized.append(float(scalar))
+    if not normalized:
+        raise ValueError(f"{field} must not be empty.")
+    return normalized
+
+
+def _normalize_code_distance_candidates(
+    code_distances: Sequence[int] | None,
+) -> List[int]:
+    """解析対象の code distance 列を正規化する。"""
+    raw_values = (
+        SURFACE_CODE_CODE_DISTANCE_CANDIDATES
+        if code_distances is None
+        else code_distances
+    )
+    normalized: Set[int] = set()
+    for raw in raw_values:
+        try:
+            dist = int(raw)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"Invalid code distance={raw!r}") from exc
+        if dist <= 0:
+            raise ValueError(f"Code distance must be positive: {dist}")
+        if dist % 2 == 0:
+            raise ValueError(
+                f"Code distance must be odd for surface-code estimates: {dist}"
+            )
+        normalized.add(dist)
+    if not normalized:
+        raise ValueError("code_distances must not be empty.")
+    return sorted(normalized)
+
+
+def normalize_surface_code_step_metrics(
+    metrics: Mapping[str, Any],
+    *,
+    context: str = "surface_code_step",
+) -> Dict[str, Any]:
+    """surface_code の compile_info 由来 step metrics を正規化する。"""
+    if not isinstance(metrics, Mapping):
+        raise ValueError(f"Invalid {context}: expected mapping.")
+
+    required_int_fields = (
+        "magic_state_consumption_count",
+        "magic_state_consumption_depth",
+        "runtime",
+        "runtime_without_topology",
+        "qubit_volume",
+    )
+    optional_int_fields = (
+        "gate_count",
+        "gate_depth",
+        "measurement_feedback_count",
+        "measurement_feedback_depth",
+        "magic_factory_count",
+        "chip_cell_count",
+    )
+
+    normalized: Dict[str, Any] = {}
+    for field in required_int_fields:
+        normalized[field] = _artifact_nonnegative_int(
+            metrics.get(field),
+            field=field,
+            context=context,
+        )
+    for field in optional_int_fields:
+        if field not in metrics:
+            continue
+        normalized[field] = _artifact_nonnegative_int(
+            metrics.get(field),
+            field=field,
+            context=context,
+        )
+
+    for meta_key in ("source", "compile_info_json", "compile_mode"):
+        value = metrics.get(meta_key)
+        if value is not None:
+            normalized[meta_key] = str(value)
+    for meta_key in ("target_error", "step_time", "rotation_precision"):
+        value = metrics.get(meta_key)
+        if value is None:
+            continue
+        try:
+            scalar = float(value)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"Invalid {meta_key}={value!r} in {context}") from exc
+        if (not np.isfinite(scalar)) or scalar <= 0:
+            raise ValueError(f"Invalid {meta_key}={scalar!r} in {context}")
+        normalized[meta_key] = float(scalar)
+    for meta_key in ("generator", "cache_key"):
+        value = metrics.get(meta_key)
+        if value is not None:
+            normalized[meta_key] = str(value)
+    if "auto_generated" in metrics:
+        normalized["auto_generated"] = bool(metrics.get("auto_generated"))
+    return normalized
+
+
+def surface_code_step_metrics_from_compile_info_json(
+    compile_info_path: str | Path,
+) -> Dict[str, Any]:
+    """surface_code の compile_info.json から step metrics を抽出する。"""
+    path = Path(compile_info_path).expanduser().resolve()
+    with path.open("r", encoding="utf-8") as f:
+        compile_info = json.load(f)
+    metrics = normalize_surface_code_step_metrics(
+        compile_info,
+        context=str(path),
+    )
+    metrics["compile_info_json"] = str(path)
+    return metrics
+
+
+def _surface_code_cache_key(target_error: float) -> str:
+    """target_error 用の cache key を返す。"""
+    mode = str(SURFACE_CODE_ROTATION_PRECISION_MODE)
+    if mode == "fixed":
+        precision_tag = f"rot_fixed_{SURFACE_CODE_FIXED_ROTATION_PRECISION:.3e}"
+    elif mode == "task_budget":
+        precision_tag = (
+            "rot_task_budget"
+            f"_eta_{SURFACE_CODE_ROTATION_ERROR_BUDGET_FRACTION:.3e}"
+        )
+    elif mode == "layer_linear_floor":
+        precision_tag = (
+            "rot_layer_linear_floor"
+            f"_eta_{SURFACE_CODE_ROTATION_ERROR_BUDGET_FRACTION:.3e}"
+            f"_floor_{SURFACE_CODE_ROTATION_PRECISION_FLOOR:.3e}"
+        )
+    else:
+        precision_tag = f"rot_{mode}"
+    return (
+        f"{SURFACE_CODE_COMPILE_MODE}:{precision_tag}:eps_{target_error:.12e}"
+    )
+
+
+def _surface_code_rotation_count_for_precision(
+    ham_name: str,
+    pf_label: PFLabel,
+    *,
+    source: str,
+    use_original: bool = False,
+) -> float:
+    """task-level rotation precision 用の N_0 を返す。"""
+    if source == "gr":
+        mol_label = f"H{_parse_molecule_type_from_ham_name(ham_name)}"
+        try:
+            return float(DECOMPO_NUM[mol_label][pf_label])
+        except KeyError as exc:
+            raise ValueError(
+                f"Missing grouped DECOMPO_NUM for {ham_name}_Operator_{pf_label}"
+            ) from exc
+
+    if source == "df":
+        payload = _load_df_artifact_payload(ham_name, pf_label)
+        rz_layers_raw = payload.get("rz_layers")
+        if not isinstance(rz_layers_raw, Mapping):
+            raise ValueError(
+                f"DF artifact missing rz_layers: {ham_name}_Operator_{pf_label}"
+            )
+        candidate_keys = (
+            "total_nonclifford_rz_count",
+            "total_nonclifford_z_count",
+            "total_ref_rz_count",
+            "ref_rz_count",
+            "total_nonclifford_z_coloring_depth",
+            "total_nonclifford_z_depth",
+            "total_nonclifford_rz_depth",
+        )
+        for key in candidate_keys:
+            if key not in rz_layers_raw:
+                continue
+            try:
+                value = float(rz_layers_raw[key])
+            except (TypeError, ValueError):
+                continue
+            if value > 0:
+                return value
+        raise ValueError(
+            f"DF artifact missing usable rotation-count proxy: {ham_name}_Operator_{pf_label}"
+        )
+
+    raise ValueError(f"Unsupported source: {source}")
+
+
+def _surface_code_rotation_layer_depth_for_precision(
+    ham_name: str,
+    pf_label: PFLabel,
+    *,
+    source: str,
+    use_original: bool = False,
+) -> float:
+    """task-level rotation precision 用の L_eff を返す。"""
+    if source == "gr":
+        mol_label = f"H{_parse_molecule_type_from_ham_name(ham_name)}"
+        try:
+            return float(PF_RZ_LAYER[mol_label][pf_label])
+        except KeyError as exc:
+            raise ValueError(
+                f"Missing grouped PF_RZ_LAYER for {ham_name}_Operator_{pf_label}"
+            ) from exc
+
+    if source == "df":
+        payload = _load_df_artifact_payload(ham_name, pf_label)
+        rz_layers_raw = payload.get("rz_layers")
+        if not isinstance(rz_layers_raw, Mapping):
+            raise ValueError(
+                f"DF artifact missing rz_layers: {ham_name}_Operator_{pf_label}"
+            )
+        _metric_key, rz_layer_value = _pick_df_rz_layer_value(
+            rz_layers_raw,
+            preferred_key=SURFACE_CODE_DF_ROTATION_LAYER_PREFERRED_KEY,
+        )
+        return float(rz_layer_value)
+
+    raise ValueError(f"Unsupported source: {source}")
+
+
+def _surface_code_proxy_t_per_rotation(rotation_precision: float) -> int:
+    """1 回転あたりの魔法状態数 proxy を返す。"""
+    if (not np.isfinite(rotation_precision)) or rotation_precision <= 0:
+        raise ValueError(f"Invalid rotation_precision={rotation_precision!r}")
+    return max(1, int(math.ceil(3.0 * math.log2(1.0 / float(rotation_precision)))))
+
+
+def _surface_code_proxy_step_metrics(
+    ham_name: str,
+    pf_label: PFLabel,
+    *,
+    source: str,
+    target_error: float,
+    step_time: float,
+    rotation_precision: float,
+    use_original: bool = False,
+) -> Dict[str, Any]:
+    """surface_code full compile を使わない高速 proxy step metrics。"""
+    rotation_count = _surface_code_rotation_count_for_precision(
+        ham_name,
+        pf_label,
+        source=source,
+        use_original=use_original,
+    )
+    rotation_layer_depth = _surface_code_rotation_layer_depth_for_precision(
+        ham_name,
+        pf_label,
+        source=source,
+        use_original=use_original,
+    )
+    t_per_rotation = _surface_code_proxy_t_per_rotation(rotation_precision)
+    magic_count = max(1, int(round(float(rotation_count) * float(t_per_rotation))))
+    magic_depth = min(
+        magic_count,
+        max(
+            1,
+            int(
+                math.ceil(
+                    float(SURFACE_CODE_PROXY_DEPTH_MULTIPLIER)
+                    * float(rotation_layer_depth)
+                    * float(t_per_rotation)
+                )
+            ),
+        ),
+    )
+    gate_count = max(
+        magic_count,
+        int(math.ceil(float(SURFACE_CODE_PROXY_GATE_COUNT_PER_MAGIC) * magic_count)),
+    )
+    runtime_wo = max(
+        magic_depth,
+        int(math.ceil(float(SURFACE_CODE_PROXY_RUNTIME_PER_MAGIC) * magic_count)),
+    )
+    metrics = {
+        "magic_state_consumption_count": magic_count,
+        "magic_state_consumption_depth": magic_depth,
+        "runtime": runtime_wo,
+        "runtime_without_topology": runtime_wo,
+        "qubit_volume": 0,
+        "gate_count": gate_count,
+        "gate_depth": runtime_wo,
+        "measurement_feedback_count": magic_count,
+        "measurement_feedback_depth": magic_depth,
+        "magic_factory_count": 0,
+        "chip_cell_count": 0,
+        "target_error": float(target_error),
+        "step_time": float(step_time),
+        "rotation_precision": float(rotation_precision),
+        "cache_key": _surface_code_cache_key(float(target_error)),
+        "generator": "proxy_formula",
+        "auto_generated": True,
+        "source": str(source),
+        "compile_mode": SURFACE_CODE_COMPILE_MODE,
+    }
+    return normalize_surface_code_step_metrics(
+        metrics,
+        context=f"{ham_name}_Operator_{pf_label}.proxy_surface_code_step",
+    )
+
+
+def _surface_code_rotation_precision(
+    ham_name: str,
+    pf_label: PFLabel,
+    *,
+    source: str,
+    target_error: float,
+    use_original: bool = False,
+    step_time: float | None = None,
+) -> float:
+    """surface_code parse に渡す回転合成精度を返す。"""
+    mode = str(SURFACE_CODE_ROTATION_PRECISION_MODE)
+    if mode == "fixed":
+        precision = float(SURFACE_CODE_FIXED_ROTATION_PRECISION)
+        if (not np.isfinite(precision)) or precision <= 0:
+            raise ValueError(
+                f"Invalid SURFACE_CODE_FIXED_ROTATION_PRECISION={precision!r}"
+            )
+        return precision
+
+    if mode not in {"task_budget", "layer_linear_floor"}:
+        raise ValueError(
+            "SURFACE_CODE_ROTATION_PRECISION_MODE must be either "
+            "'fixed', 'task_budget', or 'layer_linear_floor'."
+        )
+
+    coeff, expo = _load_compare_alpha_and_exponent(
+        ham_name,
+        pf_label,
+        source=source,
+        use_original=use_original,
+    )
+    step_t = (
+        float(step_time)
+        if step_time is not None
+        else _surface_code_step_time(
+            ham_name,
+            pf_label,
+            source=source,
+            target_error=float(target_error),
+            use_original=use_original,
+        )
+    )
+    qpe_factor = _qpe_iteration_factor(
+        float(coeff),
+        float(expo),
+        float(target_error),
+    )
+    denominator = None
+    if mode == "task_budget":
+        denominator = _surface_code_rotation_count_for_precision(
+            ham_name,
+            pf_label,
+            source=source,
+            use_original=use_original,
+        ) * float(qpe_factor)
+    elif mode == "layer_linear_floor":
+        denominator = _surface_code_rotation_layer_depth_for_precision(
+            ham_name,
+            pf_label,
+            source=source,
+            use_original=use_original,
+        ) * float(qpe_factor)
+
+    precision = (
+        step_t
+        * float(SURFACE_CODE_ROTATION_ERROR_BUDGET_FRACTION)
+        * float(target_error)
+    ) / float(denominator)
+    if mode == "layer_linear_floor":
+        precision = max(
+            float(SURFACE_CODE_ROTATION_PRECISION_FLOOR),
+            float(precision),
+        )
+    if (not np.isfinite(precision)) or precision <= 0:
+        raise ValueError(
+            "Failed to compute a positive surface-code rotation precision for "
+            f"{ham_name}_Operator_{pf_label}: {precision!r}"
+        )
+    return float(precision)
+
+
+def _surface_code_log(
+    message: str,
+    *,
+    source: str,
+    ham_name: str | None = None,
+    pf_label: PFLabel | None = None,
+    target_error: float | None = None,
+) -> None:
+    """surface_code 見積もりの進捗ログを標準出力へ出す。"""
+    prefix = f"[surface-code][{source}]"
+    if ham_name is not None and pf_label is not None:
+        prefix += f" {ham_name}_Operator_{pf_label}"
+    if target_error is not None:
+        prefix += f" {_surface_code_cache_key(float(target_error))}"
+    print(f"{prefix}: {message}", flush=True)
+
+
+def _surface_code_payload_cache_entries(payload: Mapping[str, Any]) -> List[Dict[str, Any]]:
+    """payload 内の surface_code_step cache 一覧を返す。"""
+    entries: List[Dict[str, Any]] = []
+    raw_cache = payload.get("surface_code_step_cache")
+    if isinstance(raw_cache, Sequence):
+        for idx, item in enumerate(raw_cache):
+            if not isinstance(item, Mapping):
+                continue
+            entries.append(
+                normalize_surface_code_step_metrics(
+                    item,
+                    context=f"surface_code_step_cache[{idx}]",
+                )
+            )
+    raw_latest = payload.get("surface_code_step")
+    if isinstance(raw_latest, Mapping):
+        latest = normalize_surface_code_step_metrics(
+            raw_latest,
+            context="surface_code_step",
+        )
+        if not any(
+            entry.get("cache_key") == latest.get("cache_key")
+            and entry.get("target_error") == latest.get("target_error")
+            for entry in entries
+        ):
+            entries.append(latest)
+    return entries
+
+
+def _match_surface_code_step_metrics(
+    metrics: Mapping[str, Any],
+    *,
+    target_error: float | None,
+) -> bool:
+    """metrics が指定 target_error に一致するかを判定する。"""
+    if metrics.get("compile_mode") != SURFACE_CODE_COMPILE_MODE:
+        return False
+    if target_error is None:
+        return True
+    if metrics.get("cache_key") != _surface_code_cache_key(float(target_error)):
+        return False
+    stored = metrics.get("target_error")
+    if stored is None:
+        return False
+    return math.isclose(float(stored), float(target_error), rel_tol=1e-12, abs_tol=0.0)
+
+
+def _find_surface_code_step_metrics_in_payload(
+    payload: Mapping[str, Any],
+    *,
+    target_error: float | None,
+) -> Dict[str, Any] | None:
+    """payload から target_error に対応する surface_code_step を探す。"""
+    entries = _surface_code_payload_cache_entries(payload)
+    for entry in entries:
+        if _match_surface_code_step_metrics(entry, target_error=target_error):
+            return dict(entry)
+    raw_latest = payload.get("surface_code_step")
+    if isinstance(raw_latest, Mapping) and target_error is None:
+        latest = normalize_surface_code_step_metrics(
+            raw_latest,
+            context="surface_code_step",
+        )
+        if _match_surface_code_step_metrics(latest, target_error=None):
+            return latest
+    return None
+
+
+def _surface_code_runtime_root(
+    ham_name: str,
+    pf_label: PFLabel,
+    *,
+    source: str,
+    target_error: float,
+) -> Path:
+    """surface_code 自動生成用の runtime/cached ファイル保存先を返す。"""
+    safe_ham = re.sub(r"[^A-Za-z0-9_.-]+", "_", ham_name)
+    safe_pf = re.sub(r"[^A-Za-z0-9_.-]+", "_", str(pf_label))
+    safe_target = re.sub(r"[^A-Za-z0-9_.-]+", "_", _surface_code_cache_key(target_error))
+    return (
+        SURFACE_CODE_CACHE_DIR
+        / source
+        / SURFACE_CODE_COMPILE_MODE
+        / f"{safe_ham}__{safe_pf}"
+        / safe_target
+    )
+
+
+def _surface_code_runtime_compile_info_path(
+    ham_name: str,
+    pf_label: PFLabel,
+    *,
+    source: str,
+    target_error: float,
+) -> Path:
+    """runtime cache 内の compile_info.json の想定パスを返す。"""
+    return (
+        _surface_code_runtime_root(
+            ham_name,
+            pf_label,
+            source=source,
+            target_error=target_error,
+        )
+        / "compile_info.json"
+    )
+
+
+def _extend_env_path_list(
+    env: Dict[str, str],
+    key: str,
+    entries: Sequence[Path | str],
+) -> None:
+    """環境変数 PATH 系にディレクトリを前置する。"""
+    normalized = [str(Path(entry)) for entry in entries if str(entry)]
+    if not normalized:
+        return
+    current = env.get(key, "")
+    parts = normalized + ([current] if current else [])
+    env[key] = os.pathsep.join(parts)
+
+
+def _prepare_surface_code_runtime_env(
+    runtime_root: Path,
+    *,
+    library_dirs: Sequence[Path | str] = (),
+    rotation_precision: float | None = None,
+) -> Dict[str, str]:
+    """qiskit/qcsf 実行時の writable env を用意する。"""
+    tmp_dir = runtime_root / "tmp"
+    mpl_dir = runtime_root / "mplconfig"
+    tmp_dir.mkdir(parents=True, exist_ok=True)
+    mpl_dir.mkdir(parents=True, exist_ok=True)
+    env = os.environ.copy()
+    env["TMPDIR"] = str(tmp_dir)
+    env["TMP"] = str(tmp_dir)
+    env["TEMP"] = str(tmp_dir)
+    env["MPLCONFIGDIR"] = str(mpl_dir)
+    _extend_env_path_list(env, "LD_LIBRARY_PATH", library_dirs)
+    _extend_env_path_list(env, "DYLD_LIBRARY_PATH", library_dirs)
+    gridsynth_path = Path(SURFACE_CODE_GRIDSYNTH_PATH).expanduser().resolve()
+    if gridsynth_path.exists():
+        env["GRIDSYNTH_PATH"] = str(gridsynth_path)
+    if rotation_precision is not None:
+        env["QSVT_OPENQASM_ROTATION_PRECISION"] = f"{float(rotation_precision):.17g}"
+    return env
+
+
+def _parse_molecule_type_from_ham_name(ham_name: str) -> int:
+    """ham_name から H-chain 長を抽出する。"""
+    match = re.match(r"H(?P<chain>\d+)_", str(ham_name))
+    if match is None:
+        raise ValueError(f"Could not parse molecule_type from ham_name={ham_name!r}")
+    return int(match.group("chain"))
+
+
+def _parse_distance_from_ham_name(ham_name: str) -> float:
+    """ham_name から H-chain 距離を抽出する。"""
+    match = re.search(r"_distance_(?P<dist>\d+)", str(ham_name))
+    if match is None:
+        return float(DEFAULT_DISTANCE)
+    return float(int(match.group("dist"))) / 100.0
+
+
+def _surface_code_integrals(
+    molecule_type: int,
+    *,
+    distance: float,
+    basis: str,
+) -> tuple[float, Any, Any]:
+    """surface_code 用 circuit 生成に必要な分子積分を返す。"""
+    import pyscf
+    from pyscf import gto, scf
+    from .chemistry_hamiltonian import geo
+
+    geometry, multiplicity, charge = geo(molecule_type, distance)
+    mol = gto.Mole()
+    mol.atom = geometry
+    mol.basis = basis
+    mol.spin = multiplicity - 1
+    mol.charge = charge
+    mol.symmetry = False
+    mol.build()
+
+    mf = scf.RHF(mol)
+    mf.verbose = 0
+    mf.kernel()
+    constant = float(mf.energy_nuc())
+    mo_coeff = mf.mo_coeff
+    h_core = mf.get_hcore()
+    one_body = mo_coeff.T @ h_core @ mo_coeff
+    eri_mo = pyscf.ao2mo.kernel(mf.mol, mo_coeff)
+    eri_mo = pyscf.ao2mo.restore(1, eri_mo, mo_coeff.shape[0])
+    two_body = np.asarray(eri_mo.transpose(0, 2, 3, 1), order="C")
+    return constant, one_body, two_body
+
+
+def _symmetrize_two_body_for_surface_code(two_body: Any) -> Any:
+    """DF circuit 再構築用に two-body tensor を対称化する。"""
+    t = np.asarray(two_body)
+    parts = [
+        t,
+        np.transpose(t, (1, 0, 2, 3)),
+        np.transpose(t, (0, 1, 3, 2)),
+        np.transpose(t, (1, 0, 3, 2)),
+        np.transpose(t, (2, 3, 0, 1)),
+        np.transpose(t, (3, 2, 0, 1)),
+        np.transpose(t, (2, 3, 1, 0)),
+        np.transpose(t, (3, 2, 1, 0)),
+    ]
+    sym = sum(parts) / len(parts)
+    return np.real_if_close(sym, tol=1e-8)
+
+
+def _surface_code_artifact_path(
+    ham_name: str,
+    pf_label: PFLabel,
+    *,
+    source: str,
+    use_original: bool = False,
+) -> Path:
+    """surface_code step metrics を保存する artifact パスを返す。"""
+    artifact_name = f"{ham_name}_Operator_{pf_label}"
+    if source == "df":
+        return PICKLE_DIR_DF_PATH / artifact_name
+    if source == "gr":
+        return pickle_dir(True, use_original=use_original) / artifact_name
+    raise ValueError(f"Unsupported source: {source}")
+
+
+def _attach_surface_code_step_metrics(
+    ham_name: str,
+    pf_label: PFLabel,
+    metrics: Mapping[str, Any],
+    *,
+    source: str,
+    use_original: bool = False,
+) -> Dict[str, Any]:
+    """artifact に surface_code step metrics を保存する。"""
+    artifact_name = f"{ham_name}_Operator_{pf_label}"
+    if source == "df":
+        payload = _load_df_artifact_payload(ham_name, pf_label)
+    elif source == "gr":
+        payload = _load_grouped_artifact_payload(
+            ham_name,
+            pf_label,
+            use_original=use_original,
+        )
+    else:
+        raise ValueError(f"Unsupported source: {source}")
+    metrics_with_mode = dict(metrics)
+    metrics_with_mode.setdefault("compile_mode", SURFACE_CODE_COMPILE_MODE)
+    normalized = normalize_surface_code_step_metrics(
+        metrics_with_mode,
+        context=f"{artifact_name}.surface_code_step",
+    )
+    cache_entries = _surface_code_payload_cache_entries(payload)
+    filtered_entries = []
+    for entry in cache_entries:
+        if (
+            normalized.get("target_error") is not None
+            and entry.get("target_error") is not None
+            and math.isclose(
+                float(entry["target_error"]),
+                float(normalized["target_error"]),
+                rel_tol=1e-12,
+                abs_tol=0.0,
+            )
+        ):
+            continue
+        filtered_entries.append(entry)
+    filtered_entries.append(normalized)
+    payload["surface_code_step"] = normalized
+    payload["surface_code_step_cache"] = filtered_entries
+    path = _surface_code_artifact_path(
+        ham_name,
+        pf_label,
+        source=source,
+        use_original=use_original,
+    )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("wb") as f:
+        pickle.dump(payload, f)
+    _surface_code_log(
+        "saved artifact cache",
+        source=source,
+        ham_name=ham_name,
+        pf_label=pf_label,
+        target_error=normalized.get("target_error"),
+    )
+    return normalized
+
+
+def attach_df_surface_code_step_metrics(
+    ham_name: str,
+    pf_label: PFLabel,
+    metrics: Mapping[str, Any],
+) -> Dict[str, Any]:
+    """DF artifact に surface_code step metrics を保存する。"""
+    return _attach_surface_code_step_metrics(
+        ham_name,
+        pf_label,
+        metrics,
+        source="df",
+    )
+
+
+def attach_df_surface_code_step_metrics_from_compile_info_json(
+    ham_name: str,
+    pf_label: PFLabel,
+    compile_info_path: str | Path,
+) -> Dict[str, Any]:
+    """compile_info.json を読み、DF artifact へ surface_code step metrics を保存する。"""
+    metrics = surface_code_step_metrics_from_compile_info_json(compile_info_path)
+    return attach_df_surface_code_step_metrics(ham_name, pf_label, metrics)
+
+
+def attach_grouped_surface_code_step_metrics(
+    ham_name: str,
+    pf_label: PFLabel,
+    metrics: Mapping[str, Any],
+    *,
+    use_original: bool = False,
+) -> Dict[str, Any]:
+    """Grouped artifact に surface_code step metrics を保存する。"""
+    return _attach_surface_code_step_metrics(
+        ham_name,
+        pf_label,
+        metrics,
+        source="gr",
+        use_original=use_original,
+    )
+
+
+def attach_grouped_surface_code_step_metrics_from_compile_info_json(
+    ham_name: str,
+    pf_label: PFLabel,
+    compile_info_path: str | Path,
+    *,
+    use_original: bool = False,
+) -> Dict[str, Any]:
+    """compile_info.json を読み、grouped artifact へ surface_code step metrics を保存する。"""
+    metrics = surface_code_step_metrics_from_compile_info_json(compile_info_path)
+    return attach_grouped_surface_code_step_metrics(
+        ham_name,
+        pf_label,
+        metrics,
+        use_original=use_original,
+    )
+
+
+def _load_surface_code_artifact_payload(
+    ham_name: str,
+    pf_label: PFLabel,
+    *,
+    source: str,
+    use_original: bool = False,
+) -> Dict[str, Any]:
+    """surface_code step metrics の保存先 payload を読む。"""
+    if source == "df":
+        return _load_df_artifact_payload(ham_name, pf_label)
+    if source == "gr":
+        return _load_grouped_artifact_payload(
+            ham_name,
+            pf_label,
+            use_original=use_original,
+        )
+    raise ValueError(f"Unsupported source: {source}")
+
+
+def _surface_code_step_time(
+    ham_name: str,
+    pf_label: PFLabel,
+    *,
+    source: str,
+    target_error: float,
+    use_original: bool = False,
+) -> float:
+    """target_error に対応する 1-step 時間幅 t を返す。"""
+    coeff, expo = _load_compare_alpha_and_exponent(
+        ham_name,
+        pf_label,
+        source=source,
+        use_original=use_original,
+    )
+    return float((target_error / float(coeff) * (float(expo) + 1.0)) ** (1.0 / float(expo)))
+
+
+def _build_df_surface_code_step_circuit(
+    ham_name: str,
+    pf_label: PFLabel,
+    *,
+    step_time: float,
+) -> Any:
+    """DF 1-step の Qiskit 回路を再構築する。"""
+    from openfermion.chem.molecular_data import spinorb_from_spatial
+
+    from .df_trotter.circuit import build_df_trotter_circuit
+    from .df_trotter.decompose import df_decompose_from_integrals
+    from .df_trotter.model import Block
+    from .df_trotter.ops import build_df_blocks, build_one_body_gaussian_block
+
+    molecule_type = _parse_molecule_type_from_ham_name(ham_name)
+    distance = _parse_distance_from_ham_name(ham_name)
+    constant, one_body, two_body = _surface_code_integrals(
+        molecule_type,
+        distance=distance,
+        basis=DEFAULT_BASIS,
+    )
+
+    rank_fraction = get_df_rank_fraction_for_molecule(int(molecule_type))
+    rank = None
+    tol = None
+    if rank_fraction is not None:
+        n_spatial = int(np.asarray(one_body).shape[0])
+        full_rank = int(n_spatial**2)
+        if float(rank_fraction) >= 1.0:
+            rank = full_rank
+            tol = 0.0
+        else:
+            rank = int(round(full_rank * float(rank_fraction)))
+            rank = max(1, min(rank, full_rank))
+
+    two_body = _symmetrize_two_body_for_surface_code(two_body)
+    one_body_spin, _two_body_spin = spinorb_from_spatial(one_body, two_body * 0.5)
+    raw_model = df_decompose_from_integrals(
+        one_body,
+        two_body,
+        constant=constant,
+        rank=rank,
+        tol=tol,
+    )
+    model = raw_model.hermitize()
+    h_eff = one_body_spin + model.one_body_correction
+
+    df_blocks = build_df_blocks(model)
+    blocks: List[Block] = []
+    one_body_block = build_one_body_gaussian_block(h_eff)
+    blocks.append(Block.from_one_body_gaussian(one_body_block))
+    blocks.extend(Block.from_df(block) for block in df_blocks)
+
+    qc = build_df_trotter_circuit(
+        blocks,
+        time=float(step_time),
+        num_qubits=model.N,
+        pf_label=normalize_pf_label(pf_label),
+        energy_shift=0.0,
+    )
+    qc.global_phase = 0.0
+    return qc
+
+
+def _build_grouped_surface_code_step_circuit(
+    ham_name: str,
+    pf_label: PFLabel,
+    *,
+    step_time: float,
+) -> Any:
+    """Grouped 1-step の Qiskit 回路を再構築する。"""
+    from qiskit import QuantumCircuit
+
+    from openfermion import InteractionOperator
+    from openfermion.transforms import get_fermion_operator, jordan_wigner
+    from openfermion.chem.molecular_data import spinorb_from_spatial
+
+    from .chemistry_hamiltonian import min_hamiltonian_grouper
+    from .qiskit_time_evolution_grouping import w_trotter_grouper
+    from .qiskit_time_evolution_pyscf import _build_grouped_jw_list
+
+    molecule_type = _parse_molecule_type_from_ham_name(ham_name)
+    distance = _parse_distance_from_ham_name(ham_name)
+    constant, one_body, two_body = _surface_code_integrals(
+        molecule_type,
+        distance=distance,
+        basis=DEFAULT_BASIS,
+    )
+
+    if molecule_type in (2, 3):
+        h1s, h2s = spinorb_from_spatial(one_body, two_body * 0.5)
+        jw_hamiltonian = jordan_wigner(
+            get_fermion_operator(InteractionOperator(constant, h1s, h2s))
+        )
+        num_qubits = int(h1s.shape[0])
+        grouped_ops, _grouped_name = min_hamiltonian_grouper(jw_hamiltonian, ham_name)
+        commuting_cliques = [[op] for op in grouped_ops]
+    else:
+        commuting_cliques = _build_grouped_jw_list(constant, one_body, two_body)
+        num_qubits = int(2 * np.asarray(one_body).shape[0])
+
+    qc = QuantumCircuit(int(num_qubits))
+    w_trotter_grouper(
+        qc,
+        commuting_cliques,
+        float(step_time),
+        int(num_qubits),
+        normalize_pf_label(pf_label),
+    )
+    qc.global_phase = 0.0
+    return qc
+
+
+def _surface_code_qasm_text_from_circuit(
+    qc: Any,
+    *,
+    runtime_root: Path,
+) -> str:
+    """Qiskit 回路を OpenQASM2 文字列へ変換する。"""
+    env = _prepare_surface_code_runtime_env(runtime_root)
+    os.environ.update(
+        {
+            "TMPDIR": env["TMPDIR"],
+            "TMP": env["TMP"],
+            "TEMP": env["TEMP"],
+            "MPLCONFIGDIR": env["MPLCONFIGDIR"],
+        }
+    )
+    import tempfile
+
+    tempfile.tempdir = env["TMPDIR"]
+
+    from .qiskit_time_evolution_utils import _decompose_to_basis
+
+    qc_basis = _decompose_to_basis(
+        qc,
+        basis_gates=SURFACE_CODE_QASM_BASIS_GATES,
+        decompose_reps=int(SURFACE_CODE_QASM_DECOMPOSE_REPS),
+        optimization_level=0,
+    )
+    try:
+        from qiskit import qasm2
+
+        return str(qasm2.dumps(qc_basis))
+    except Exception:
+        if hasattr(qc_basis, "qasm"):
+            return str(qc_basis.qasm())
+        raise RuntimeError("Failed to export circuit to OpenQASM2.")
+
+
+def _run_surface_code_command(
+    cmd: Sequence[str],
+    *,
+    runtime_root: Path,
+    rotation_precision: float | None = None,
+) -> None:
+    """surface_code CLI を実行し、失敗時は詳細付きで例外化する。"""
+    binary_path = Path(cmd[0]).expanduser().resolve()
+    env = _prepare_surface_code_runtime_env(
+        runtime_root,
+        library_dirs=(binary_path.parent,),
+        rotation_precision=rotation_precision,
+    )
+    completed = subprocess.run(
+        list(cmd),
+        cwd=str(runtime_root),
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if completed.returncode == 0:
+        return
+    stderr = completed.stderr.strip()
+    stdout = completed.stdout.strip()
+    details = "\n".join(part for part in (stdout, stderr) if part)
+    if (
+        "error while loading shared libraries" in details
+        or "GLIBC_" in details
+        or "GLIBCXX_" in details
+    ):
+        raise RuntimeError(
+            "surface_code qcsf binary is not runnable on this machine. "
+            f"Binary: {binary_path}. "
+            f"Added {binary_path.parent} to LD_LIBRARY_PATH automatically, "
+            "but the remaining loader error indicates that either "
+            "`libqsvt.so` cannot be loaded or the binary/library was built "
+            "against a newer system ABI (for example GLIBC/GLIBCXX) than this "
+            "environment provides. Point `SURFACE_CODE_QCSF_PATH` to a "
+            "compatible local build, or generate `compile_info.json` outside "
+            "this environment and attach it with "
+            "`attach_*_surface_code_step_metrics_from_compile_info_json(...)`."
+            + (f"\n{details}" if details else "")
+        )
+    raise RuntimeError(
+        f"surface_code command failed (code={completed.returncode}): {' '.join(cmd)}"
+        + (f"\n{details}" if details else "")
+    )
+
+
+def _run_surface_code_command_logged(
+    cmd: Sequence[str],
+    *,
+    runtime_root: Path,
+    source: str,
+    ham_name: str,
+    pf_label: PFLabel,
+    target_error: float,
+    stage_name: str,
+    rotation_precision: float | None = None,
+) -> None:
+    """surface_code CLI を実行し、開始/完了と経過時間をログ出力する。"""
+    _surface_code_log(
+        f"running {stage_name}",
+        source=source,
+        ham_name=ham_name,
+        pf_label=pf_label,
+        target_error=target_error,
+    )
+    t0 = time.perf_counter()
+    _run_surface_code_command(
+        cmd,
+        runtime_root=runtime_root,
+        rotation_precision=rotation_precision,
+    )
+    elapsed = time.perf_counter() - t0
+    _surface_code_log(
+        f"finished {stage_name} ({elapsed:.1f}s)",
+        source=source,
+        ham_name=ham_name,
+        pf_label=pf_label,
+        target_error=target_error,
+    )
+
+
+def _ensure_surface_code_binary_usable(
+    qcsf_path: Path,
+    *,
+    runtime_root: Path,
+    rotation_precision: float | None = None,
+) -> None:
+    """qcsf 実行バイナリがこの環境で起動可能か事前確認する。"""
+    _run_surface_code_command(
+        [str(qcsf_path), "--help"],
+        runtime_root=runtime_root,
+        rotation_precision=rotation_precision,
+    )
+
+
+def _generate_surface_code_step_metrics(
+    ham_name: str,
+    pf_label: PFLabel,
+    *,
+    source: str,
+    target_error: float,
+    use_original: bool = False,
+) -> Dict[str, Any]:
+    """Qiskit -> OpenQASM2 -> qcsf の流れで step metrics を生成する。"""
+    _surface_code_log(
+        "auto-generate start",
+        source=source,
+        ham_name=ham_name,
+        pf_label=pf_label,
+        target_error=target_error,
+    )
+    step_time = _surface_code_step_time(
+        ham_name,
+        pf_label,
+        source=source,
+        target_error=float(target_error),
+        use_original=use_original,
+    )
+    _surface_code_log(
+        f"computed step_time={step_time:.6e}",
+        source=source,
+        ham_name=ham_name,
+        pf_label=pf_label,
+        target_error=target_error,
+    )
+    rotation_precision = _surface_code_rotation_precision(
+        ham_name,
+        pf_label,
+        source=source,
+        target_error=float(target_error),
+        use_original=use_original,
+        step_time=float(step_time),
+    )
+    _surface_code_log(
+        "rotation_precision="
+        f"{rotation_precision:.6e} mode={SURFACE_CODE_ROTATION_PRECISION_MODE}",
+        source=source,
+        ham_name=ham_name,
+        pf_label=pf_label,
+        target_error=target_error,
+    )
+    if SURFACE_CODE_COMPILE_MODE == "proxy":
+        _surface_code_log(
+            "using proxy surface-code estimator",
+            source=source,
+            ham_name=ham_name,
+            pf_label=pf_label,
+            target_error=target_error,
+        )
+        return _surface_code_proxy_step_metrics(
+            ham_name,
+            pf_label,
+            source=source,
+            target_error=float(target_error),
+            step_time=float(step_time),
+            rotation_precision=float(rotation_precision),
+            use_original=use_original,
+        )
+    qcsf_path = Path(SURFACE_CODE_QCSF_PATH).expanduser().resolve()
+    if not qcsf_path.exists():
+        raise FileNotFoundError(f"surface_code binary not found: {qcsf_path}")
+    topology_path = Path(SURFACE_CODE_TOPOLOGY_PATH).expanduser().resolve()
+    if not topology_path.exists():
+        raise FileNotFoundError(f"surface_code topology file not found: {topology_path}")
+    runtime_root = _surface_code_runtime_root(
+        ham_name,
+        pf_label,
+        source=source,
+        target_error=float(target_error),
+    )
+    runtime_root.mkdir(parents=True, exist_ok=True)
+    _surface_code_log(
+        "checking qcsf binary",
+        source=source,
+        ham_name=ham_name,
+        pf_label=pf_label,
+        target_error=target_error,
+    )
+    t0 = time.perf_counter()
+    _ensure_surface_code_binary_usable(
+        qcsf_path,
+        runtime_root=runtime_root,
+        rotation_precision=rotation_precision,
+    )
+    _surface_code_log(
+        f"qcsf binary ok ({time.perf_counter() - t0:.1f}s)",
+        source=source,
+        ham_name=ham_name,
+        pf_label=pf_label,
+        target_error=target_error,
+    )
+
+    _surface_code_log(
+        f"building {source} step circuit",
+        source=source,
+        ham_name=ham_name,
+        pf_label=pf_label,
+        target_error=target_error,
+    )
+    t0 = time.perf_counter()
+    if source == "df":
+        qc = _build_df_surface_code_step_circuit(
+            ham_name,
+            pf_label,
+            step_time=float(step_time),
+        )
+    elif source == "gr":
+        qc = _build_grouped_surface_code_step_circuit(
+            ham_name,
+            pf_label,
+            step_time=float(step_time),
+        )
+    else:
+        raise ValueError(f"Unsupported source: {source}")
+    _surface_code_log(
+        f"built {source} step circuit ({time.perf_counter() - t0:.1f}s)",
+        source=source,
+        ham_name=ham_name,
+        pf_label=pf_label,
+        target_error=target_error,
+    )
+
+    _surface_code_log(
+        "exporting OpenQASM2",
+        source=source,
+        ham_name=ham_name,
+        pf_label=pf_label,
+        target_error=target_error,
+    )
+    t0 = time.perf_counter()
+    qasm_text = _surface_code_qasm_text_from_circuit(qc, runtime_root=runtime_root)
+    _surface_code_log(
+        f"exported OpenQASM2 ({time.perf_counter() - t0:.1f}s)",
+        source=source,
+        ham_name=ham_name,
+        pf_label=pf_label,
+        target_error=target_error,
+    )
+    qasm_path = runtime_root / "step.qasm"
+    ir_path = runtime_root / "step_ir.json"
+    opt_path = runtime_root / "step_opt.json"
+    asm_path = runtime_root / "step.asm"
+    compile_info_path = runtime_root / "compile_info.json"
+    opt_yaml = runtime_root / "opt.yaml"
+    compile_yaml = runtime_root / "compile.yaml"
+
+    qasm_path.write_text(qasm_text, encoding="utf-8")
+    opt_yaml.write_text(
+        "\n".join(
+            [
+                f"input: {ir_path}",
+                "circuit: main",
+                f"output: {opt_path}",
+                "pass:",
+                "- ir::decompose_inst",
+                "- ir::ignore_global_phase",
+                "- ir::delete_consecutive_same_pauli",
+                "- ir::delete_opt_hint",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    compile_yaml.write_text(
+        "\n".join(
+            [
+                "source: IR",
+                f"input: {opt_path}",
+                "circuit: main",
+                "target: FTQC",
+                f"output: {asm_path}",
+                f"ftqc_topology: {topology_path}",
+                f"ftqc_machine_type: {SURFACE_CODE_MACHINE_TYPE}",
+                f"ftqc_magic_generation_period: {int(SURFACE_CODE_MAGIC_GENERATION_PERIOD)}",
+                f"ftqc_maximum_magic_state_stock: {int(SURFACE_CODE_MAX_MAGIC_STATE_STOCK)}",
+                f"ftqc_entanglement_generation_period: {int(SURFACE_CODE_ENTANGLEMENT_GENERATION_PERIOD)}",
+                f"ftqc_maximum_entangled_state_stock: {int(SURFACE_CODE_MAX_ENTANGLED_STATE_STOCK)}",
+                f"ftqc_reaction_time: {int(SURFACE_CODE_REACTION_TIME)}",
+                f"ftqc_dump_compile_info_to_json: {compile_info_path}",
+                "ftqc_pass:",
+                "  - ftqc::init_compile_info",
+                "  - ftqc::calc_info_without_topology",
+                "  - ftqc::dump_compile_info",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    _run_surface_code_command_logged(
+        [
+            str(qcsf_path),
+            "parse",
+            "--input",
+            str(qasm_path),
+            "--output",
+            str(ir_path),
+            "--format",
+            "OpenQASM2",
+            "--verbose",
+        ],
+        runtime_root=runtime_root,
+        source=source,
+        ham_name=ham_name,
+        pf_label=pf_label,
+        target_error=target_error,
+        stage_name="qcsf parse",
+        rotation_precision=rotation_precision,
+    )
+    _run_surface_code_command_logged(
+        [
+            str(qcsf_path),
+            "opt",
+            "--pipeline",
+            str(opt_yaml),
+            "--verbose",
+        ],
+        runtime_root=runtime_root,
+        source=source,
+        ham_name=ham_name,
+        pf_label=pf_label,
+        target_error=target_error,
+        stage_name="qcsf opt",
+        rotation_precision=rotation_precision,
+    )
+    _run_surface_code_command_logged(
+        [
+            str(qcsf_path),
+            "compile",
+            "--pipeline",
+            str(compile_yaml),
+            "--verbose",
+        ],
+        runtime_root=runtime_root,
+        source=source,
+        ham_name=ham_name,
+        pf_label=pf_label,
+        target_error=target_error,
+        stage_name="qcsf compile",
+        rotation_precision=rotation_precision,
+    )
+
+    metrics = surface_code_step_metrics_from_compile_info_json(compile_info_path)
+    metrics["target_error"] = float(target_error)
+    metrics["step_time"] = float(step_time)
+    metrics["cache_key"] = _surface_code_cache_key(float(target_error))
+    metrics["generator"] = "auto_qcsf"
+    metrics["auto_generated"] = True
+    metrics["source"] = str(source)
+    metrics["compile_mode"] = SURFACE_CODE_COMPILE_MODE
+    metrics["rotation_precision"] = float(rotation_precision)
+    normalized = normalize_surface_code_step_metrics(
+        metrics,
+        context=f"{ham_name}_Operator_{pf_label}.generated_surface_code_step",
+    )
+    _surface_code_log(
+        "auto-generate done",
+        source=source,
+        ham_name=ham_name,
+        pf_label=pf_label,
+        target_error=target_error,
+    )
+    return normalized
+
+
+def _auto_populate_surface_code_step_metrics(
+    ham_name: str,
+    pf_label: PFLabel,
+    *,
+    source: str,
+    target_error: float,
+    use_original: bool = False,
+) -> Dict[str, Any]:
+    """surface_code_step を自動生成して artifact に保存する。"""
+    _surface_code_log(
+        "artifact cache miss -> generating",
+        source=source,
+        ham_name=ham_name,
+        pf_label=pf_label,
+        target_error=target_error,
+    )
+    metrics = _generate_surface_code_step_metrics(
+        ham_name,
+        pf_label,
+        source=source,
+        target_error=float(target_error),
+        use_original=use_original,
+    )
+    return _attach_surface_code_step_metrics(
+        ham_name,
+        pf_label,
+        metrics,
+        source=source,
+        use_original=use_original,
+    )
+
+
+def _load_surface_code_step_metrics_from_runtime_cache(
+    ham_name: str,
+    pf_label: PFLabel,
+    *,
+    source: str,
+    target_error: float | None,
+    use_original: bool = False,
+    attach_to_artifact: bool = True,
+) -> Dict[str, Any] | None:
+    """runtime cache の compile_info.json を artifact cache へ取り込む。"""
+    if target_error is None:
+        return None
+
+    runtime_root = _surface_code_runtime_root(
+        ham_name,
+        pf_label,
+        source=source,
+        target_error=float(target_error),
+    )
+    compile_info_path = _surface_code_runtime_compile_info_path(
+        ham_name,
+        pf_label,
+        source=source,
+        target_error=float(target_error),
+    )
+    if not compile_info_path.exists():
+        if runtime_root.exists():
+            _surface_code_log(
+                "runtime cache exists but compile_info.json is missing",
+                source=source,
+                ham_name=ham_name,
+                pf_label=pf_label,
+                target_error=target_error,
+            )
+        return None
+
+    _surface_code_log(
+        "runtime cache hit -> importing compile_info.json",
+        source=source,
+        ham_name=ham_name,
+        pf_label=pf_label,
+        target_error=target_error,
+    )
+    metrics = surface_code_step_metrics_from_compile_info_json(compile_info_path)
+    metrics["target_error"] = float(target_error)
+    metrics["step_time"] = _surface_code_step_time(
+        ham_name,
+        pf_label,
+        source=source,
+        target_error=float(target_error),
+        use_original=use_original,
+    )
+    metrics["cache_key"] = _surface_code_cache_key(float(target_error))
+    metrics["generator"] = "runtime_cache"
+    metrics["auto_generated"] = True
+    metrics["source"] = str(source)
+    metrics["compile_mode"] = SURFACE_CODE_COMPILE_MODE
+    metrics.setdefault(
+        "rotation_precision",
+        _surface_code_rotation_precision(
+            ham_name,
+            pf_label,
+            source=source,
+            target_error=float(target_error),
+            use_original=use_original,
+            step_time=float(metrics["step_time"]),
+        ),
+    )
+    normalized = normalize_surface_code_step_metrics(
+        metrics,
+        context=f"{ham_name}_Operator_{pf_label}.runtime_surface_code_step",
+    )
+    if not attach_to_artifact:
+        return normalized
+    return _attach_surface_code_step_metrics(
+        ham_name,
+        pf_label,
+        normalized,
+        source=source,
+        use_original=use_original,
+    )
+
+
+def _load_surface_code_step_metrics(
+    ham_name: str,
+    pf_label: PFLabel,
+    *,
+    source: str,
+    target_error: float | None = None,
+    auto_generate: bool = SURFACE_CODE_AUTO_POPULATE,
+    use_original: bool = False,
+) -> Dict[str, Any]:
+    """artifact から保存済み surface_code step metrics を読む。"""
+    artifact_name = f"{ham_name}_Operator_{pf_label}"
+    _surface_code_log(
+        "loading step metrics",
+        source=source,
+        ham_name=ham_name,
+        pf_label=pf_label,
+        target_error=target_error,
+    )
+    payload = _load_surface_code_artifact_payload(
+        ham_name,
+        pf_label,
+        source=source,
+        use_original=use_original,
+    )
+    cached = _find_surface_code_step_metrics_in_payload(
+        payload,
+        target_error=target_error,
+    )
+    if cached is not None:
+        _surface_code_log(
+            "artifact cache hit",
+            source=source,
+            ham_name=ham_name,
+            pf_label=pf_label,
+            target_error=target_error,
+        )
+        return cached
+    runtime_cached = _load_surface_code_step_metrics_from_runtime_cache(
+        ham_name,
+        pf_label,
+        source=source,
+        target_error=target_error,
+        use_original=use_original,
+        attach_to_artifact=True,
+    )
+    if runtime_cached is not None:
+        return runtime_cached
+    if auto_generate:
+        return _auto_populate_surface_code_step_metrics(
+            ham_name,
+            pf_label,
+            source=source,
+            target_error=float(target_error or TARGET_ERROR),
+            use_original=use_original,
+        )
+    raise ValueError(
+        f"{source} artifact missing surface_code_step: {artifact_name}"
+    )
+
+
+def _load_df_surface_code_step_metrics(
+    ham_name: str,
+    pf_label: PFLabel,
+    *,
+    target_error: float | None = None,
+    auto_generate: bool = SURFACE_CODE_AUTO_POPULATE,
+) -> Dict[str, Any]:
+    """DF artifact から保存済み surface_code step metrics を読む。"""
+    return _load_surface_code_step_metrics(
+        ham_name,
+        pf_label,
+        source="df",
+        target_error=target_error,
+        auto_generate=auto_generate,
+    )
+
+
+def _load_grouped_surface_code_step_metrics(
+    ham_name: str,
+    pf_label: PFLabel,
+    *,
+    target_error: float | None = None,
+    auto_generate: bool = SURFACE_CODE_AUTO_POPULATE,
+    use_original: bool = False,
+) -> Dict[str, Any]:
+    """Grouped artifact から保存済み surface_code step metrics を読む。"""
+    return _load_surface_code_step_metrics(
+        ham_name,
+        pf_label,
+        source="gr",
+        target_error=target_error,
+        auto_generate=auto_generate,
+        use_original=use_original,
+    )
+
+
+def backfill_surface_code_step_cache_from_runtime_cache(
+    Hchain: int,
+    n_w_list: Sequence[PFLabel],
+    *,
+    source: str = "gr",
+    target_error: float = TARGET_ERROR,
+    use_original: bool = False,
+    error_on_missing: bool = False,
+) -> Dict[int, Dict[PFLabel, Dict[str, Any]]]:
+    """既存 runtime cache から artifact の surface_code_step_cache を埋める。"""
+    if Hchain < 3:
+        raise ValueError(
+            "Hchain must be >= 3 for surface_code step-cache backfill."
+        )
+    _surface_code_log(
+        f"backfill start Hchain={Hchain}, pf={list(n_w_list)}",
+        source=source,
+        target_error=target_error,
+    )
+    chain_list = [i for i in range(3, Hchain + 1)]
+    Hchain_str = [f"H{i}" for i in chain_list]
+    num_qubits = [2 * i for i in chain_list]
+    results: Dict[int, Dict[PFLabel, Dict[str, Any]]] = {}
+    for qubits, mol in zip(num_qubits, Hchain_str):
+        if qubits % 4 == 0:
+            ham_name = mol + "_sto-3g_singlet_distance_100_charge_0_grouping"
+        else:
+            ham_name = mol + "_sto-3g_triplet_1+_distance_100_charge_1_grouping"
+        per_pf: Dict[PFLabel, Dict[str, Any]] = {}
+        for pf_label in n_w_list:
+            try:
+                per_pf[pf_label] = _load_surface_code_step_metrics(
+                    ham_name,
+                    pf_label,
+                    source=source,
+                    target_error=float(target_error),
+                    auto_generate=False,
+                    use_original=use_original,
+                )
+            except Exception as exc:
+                if error_on_missing:
+                    raise
+                print(
+                    "[surface-code][backfill skip "
+                    f"{source}] {ham_name}_Operator_{pf_label}: {exc}"
+                )
+        if per_pf:
+            results[qubits] = per_pf
+    _surface_code_log(
+        f"backfill done: {sum(len(v) for v in results.values())} entries",
+        source=source,
+        target_error=target_error,
+    )
+    return results
+
+
+def backfill_grouped_surface_code_step_cache_from_runtime_cache(
+    Hchain: int,
+    n_w_list: Sequence[PFLabel],
+    *,
+    target_error: float = TARGET_ERROR,
+    use_original: bool = False,
+    error_on_missing: bool = False,
+) -> Dict[int, Dict[PFLabel, Dict[str, Any]]]:
+    """Grouped 用 runtime cache から artifact cache を埋める。"""
+    return backfill_surface_code_step_cache_from_runtime_cache(
+        Hchain,
+        n_w_list,
+        source="gr",
+        target_error=target_error,
+        use_original=use_original,
+        error_on_missing=error_on_missing,
+    )
+
+
+def backfill_df_surface_code_step_cache_from_runtime_cache(
+    Hchain: int,
+    n_w_list: Sequence[PFLabel],
+    *,
+    target_error: float = TARGET_ERROR,
+    error_on_missing: bool = False,
+) -> Dict[int, Dict[PFLabel, Dict[str, Any]]]:
+    """DF 用 runtime cache から artifact cache を埋める。"""
+    return backfill_surface_code_step_cache_from_runtime_cache(
+        Hchain,
+        n_w_list,
+        source="df",
+        target_error=target_error,
+        error_on_missing=error_on_missing,
+    )
+
+
+def _surface_code_cycle_failure_rate(
+    code_distance: int,
+    *,
+    p_phys: float,
+    p_th: float,
+    a_eff: float,
+) -> float:
+    """有効 logical cycle failure rate を近似式で計算する。"""
+    if code_distance <= 0 or code_distance % 2 == 0:
+        raise ValueError(
+            f"code_distance must be a positive odd integer: {code_distance}"
+        )
+    if p_phys <= 0:
+        raise ValueError("p_phys must be positive.")
+    if p_th <= 0:
+        raise ValueError("p_th must be positive.")
+    if a_eff <= 0:
+        raise ValueError("a_eff must be positive.")
+    exponent = (code_distance + 1) / 2.0
+    return float(a_eff * ((p_phys / p_th) ** exponent))
+
+
+def _surface_code_failure_probability(lambda_value: float) -> float:
+    """Poisson 近似で failure probability を計算する。"""
+    if lambda_value <= 0:
+        return 0.0
+    if lambda_value > 700:
+        return 1.0
+    return float(1.0 - math.exp(-lambda_value))
+
+
+def estimate_df_surface_code_task_resources(
+    ham_name: str,
+    pf_label: PFLabel,
+    *,
+    target_error: float = TARGET_ERROR,
+    p_th: float = SURFACE_CODE_P_TH,
+    a_eff_values: Sequence[float] | None = None,
+    p_phys_values: Sequence[float] | None = None,
+    delta_fail_values: Sequence[float] | None = None,
+    code_distances: Sequence[int] | None = None,
+    runtime_key: str = SURFACE_CODE_RUNTIME_METRIC,
+    step_metrics: Mapping[str, Any] | None = None,
+    use_original: bool = False,
+) -> Dict[str, Any]:
+    """DF 1-step の surface-code metrics から QPE タスク全体資源を見積もる。"""
+    return _estimate_surface_code_task_resources(
+        ham_name,
+        pf_label,
+        source="df",
+        target_error=target_error,
+        p_th=p_th,
+        a_eff_values=a_eff_values,
+        p_phys_values=p_phys_values,
+        delta_fail_values=delta_fail_values,
+        code_distances=code_distances,
+        runtime_key=runtime_key,
+        step_metrics=step_metrics,
+        use_original=use_original,
+    )
+
+
+def _estimate_surface_code_task_resources(
+    ham_name: str,
+    pf_label: PFLabel,
+    *,
+    source: str,
+    target_error: float = TARGET_ERROR,
+    p_th: float = SURFACE_CODE_P_TH,
+    a_eff_values: Sequence[float] | None = None,
+    p_phys_values: Sequence[float] | None = None,
+    delta_fail_values: Sequence[float] | None = None,
+    code_distances: Sequence[int] | None = None,
+    runtime_key: str = SURFACE_CODE_RUNTIME_METRIC,
+    step_metrics: Mapping[str, Any] | None = None,
+    use_original: bool = False,
+) -> Dict[str, Any]:
+    """1-step の surface-code metrics から QPE タスク全体資源を見積もる。"""
+    if target_error <= 0:
+        raise ValueError("target_error must be positive.")
+    if runtime_key not in {"runtime", "runtime_without_topology"}:
+        raise ValueError(
+            "runtime_key must be either 'runtime' or 'runtime_without_topology'."
+        )
+
+    coeff, expo = _load_compare_alpha_and_exponent(
+        ham_name,
+        pf_label,
+        source=source,
+        use_original=use_original,
+    )
+    qpe_factor = _qpe_iteration_factor(
+        float(coeff),
+        float(expo),
+        float(target_error),
+    )
+    step = normalize_surface_code_step_metrics(
+        step_metrics
+        if step_metrics is not None
+        else _load_surface_code_step_metrics(
+            ham_name,
+            pf_label,
+            source=source,
+            target_error=float(target_error),
+            use_original=use_original,
+        ),
+        context=f"{ham_name}_Operator_{pf_label}.surface_code_step",
+    )
+
+    a_eff_list = _normalize_positive_scalar_list(
+        a_eff_values if a_eff_values is not None else SURFACE_CODE_A_EFF_CASES,
+        field="a_eff",
+    )
+    p_phys_list = _normalize_positive_scalar_list(
+        p_phys_values if p_phys_values is not None else SURFACE_CODE_P_PHYS_CASES,
+        field="p_phys",
+    )
+    delta_fail_list = _normalize_positive_scalar_list(
+        delta_fail_values
+        if delta_fail_values is not None
+        else SURFACE_CODE_DELTA_FAIL_CASES,
+        field="delta_fail",
+    )
+    code_distance_list = _normalize_code_distance_candidates(code_distances)
+
+    step_qubit_volume = float(step["qubit_volume"])
+    total_magic_state_count = qpe_factor * float(step["magic_state_consumption_count"])
+    total_magic_state_depth = qpe_factor * float(step["magic_state_consumption_depth"])
+    total_runtime = qpe_factor * float(step[runtime_key])
+    total_runtime_with_topology = qpe_factor * float(step["runtime"])
+    total_runtime_without_topology = qpe_factor * float(
+        step["runtime_without_topology"]
+    )
+    total_qubit_volume = qpe_factor * step_qubit_volume
+
+    scenarios: List[Dict[str, Any]] = []
+    for a_eff in a_eff_list:
+        for p_phys in p_phys_list:
+            for delta_fail in delta_fail_list:
+                selected: Dict[str, Any] | None = None
+                last_candidate: Dict[str, Any] | None = None
+                for code_distance in code_distance_list:
+                    p_cycle = _surface_code_cycle_failure_rate(
+                        code_distance,
+                        p_phys=p_phys,
+                        p_th=float(p_th),
+                        a_eff=a_eff,
+                    )
+                    lambda_step = step_qubit_volume * p_cycle
+                    lambda_task = total_qubit_volume * p_cycle
+                    p_fail_step = _surface_code_failure_probability(lambda_step)
+                    p_fail_task = _surface_code_failure_probability(lambda_task)
+                    candidate = {
+                        "code_distance": int(code_distance),
+                        "p_cycle_logical": float(p_cycle),
+                        "lambda_step": float(lambda_step),
+                        "lambda_task": float(lambda_task),
+                        "p_fail_step": float(p_fail_step),
+                        "p_fail_task": float(p_fail_task),
+                    }
+                    last_candidate = candidate
+                    if p_fail_task <= delta_fail:
+                        selected = candidate
+                        break
+
+                scenario: Dict[str, Any] = {
+                    "a_eff": float(a_eff),
+                    "p_phys": float(p_phys),
+                    "delta_fail": float(delta_fail),
+                    "meets_target": selected is not None,
+                    "d_min": int(selected["code_distance"]) if selected is not None else None,
+                }
+                if selected is not None:
+                    scenario.update(selected)
+                elif last_candidate is not None:
+                    scenario.update(
+                        {
+                            "code_distance_max_checked": int(
+                                last_candidate["code_distance"]
+                            ),
+                            "p_cycle_logical_at_max_checked": float(
+                                last_candidate["p_cycle_logical"]
+                            ),
+                            "lambda_step_at_max_checked": float(
+                                last_candidate["lambda_step"]
+                            ),
+                            "lambda_task_at_max_checked": float(
+                                last_candidate["lambda_task"]
+                            ),
+                            "p_fail_step_at_max_checked": float(
+                                last_candidate["p_fail_step"]
+                            ),
+                            "p_fail_task_at_max_checked": float(
+                                last_candidate["p_fail_task"]
+                            ),
+                        }
+                    )
+                scenarios.append(scenario)
+
+    return {
+        "ham_name": ham_name,
+        "pf_label": str(pf_label),
+        "source": source,
+        "target_error": float(target_error),
+        "coeff": float(coeff),
+        "expo": float(expo),
+        # existing qpe_factor is used as an effective total block-count proxy.
+        "effective_block_count": float(qpe_factor),
+        "step_metrics": step,
+        "totals": {
+            "total_magic_state_count": float(total_magic_state_count),
+            "total_magic_state_depth": float(total_magic_state_depth),
+            "total_runtime": float(total_runtime),
+            "total_runtime_with_topology": float(total_runtime_with_topology),
+            "total_runtime_without_topology": float(
+                total_runtime_without_topology
+            ),
+            "runtime_key": runtime_key,
+            "total_qubit_volume": float(total_qubit_volume),
+        },
+        "failure_model": {
+            "p_th": float(p_th),
+            "code_distances": code_distance_list,
+            "a_eff_values": [float(v) for v in a_eff_list],
+            "p_phys_values": [float(v) for v in p_phys_list],
+            "delta_fail_values": [float(v) for v in delta_fail_list],
+        },
+        "scenarios": scenarios,
+    }
+
+
+def estimate_grouped_surface_code_task_resources(
+    ham_name: str,
+    pf_label: PFLabel,
+    *,
+    target_error: float = TARGET_ERROR,
+    p_th: float = SURFACE_CODE_P_TH,
+    a_eff_values: Sequence[float] | None = None,
+    p_phys_values: Sequence[float] | None = None,
+    delta_fail_values: Sequence[float] | None = None,
+    code_distances: Sequence[int] | None = None,
+    runtime_key: str = SURFACE_CODE_RUNTIME_METRIC,
+    step_metrics: Mapping[str, Any] | None = None,
+    use_original: bool = False,
+) -> Dict[str, Any]:
+    """Grouped 1-step の surface-code metrics から QPE タスク全体資源を見積もる。"""
+    return _estimate_surface_code_task_resources(
+        ham_name,
+        pf_label,
+        source="gr",
+        target_error=target_error,
+        p_th=p_th,
+        a_eff_values=a_eff_values,
+        p_phys_values=p_phys_values,
+        delta_fail_values=delta_fail_values,
+        code_distances=code_distances,
+        runtime_key=runtime_key,
+        step_metrics=step_metrics,
+        use_original=use_original,
+    )
+
+
+def surface_code_task_resource_sweep_df(
+    Hchain: int,
+    n_w_list: Sequence[PFLabel],
+    *,
+    target_error: float = TARGET_ERROR,
+    p_th: float = SURFACE_CODE_P_TH,
+    a_eff_values: Sequence[float] | None = None,
+    p_phys_values: Sequence[float] | None = None,
+    delta_fail_values: Sequence[float] | None = None,
+    code_distances: Sequence[int] | None = None,
+    runtime_key: str = SURFACE_CODE_RUNTIME_METRIC,
+    use_original: bool = False,
+    error_on_missing: bool = True,
+) -> Dict[int, Dict[PFLabel, Dict[str, Any]]]:
+    """DF artifact 群に対して surface-code タスク資源をまとめて見積もる。"""
+    return _surface_code_task_resource_sweep(
+        Hchain,
+        n_w_list,
+        source="df",
+        target_error=target_error,
+        p_th=p_th,
+        a_eff_values=a_eff_values,
+        p_phys_values=p_phys_values,
+        delta_fail_values=delta_fail_values,
+        code_distances=code_distances,
+        runtime_key=runtime_key,
+        use_original=use_original,
+        error_on_missing=error_on_missing,
+    )
+
+
+def _surface_code_task_resource_sweep(
+    Hchain: int,
+    n_w_list: Sequence[PFLabel],
+    *,
+    source: str,
+    target_error: float = TARGET_ERROR,
+    p_th: float = SURFACE_CODE_P_TH,
+    a_eff_values: Sequence[float] | None = None,
+    p_phys_values: Sequence[float] | None = None,
+    delta_fail_values: Sequence[float] | None = None,
+    code_distances: Sequence[int] | None = None,
+    runtime_key: str = SURFACE_CODE_RUNTIME_METRIC,
+    use_original: bool = False,
+    error_on_missing: bool = True,
+) -> Dict[int, Dict[PFLabel, Dict[str, Any]]]:
+    """artifact 群に対して surface-code タスク資源をまとめて見積もる。"""
+    if Hchain < 3:
+        raise ValueError(
+            "Hchain must be >= 3 for surface_code task-resource sweep."
+        )
+
+    results: Dict[int, Dict[PFLabel, Dict[str, Any]]] = {}
+    errors: List[str] = []
+    chain_list = [i for i in range(3, Hchain + 1)]
+    mol_labels = [f"H{i}" for i in chain_list]
+    num_qubits = [2 * i for i in chain_list]
+
+    for qubits, mol in zip(num_qubits, mol_labels):
+        if qubits % 4 == 0:
+            ham_name = mol + "_sto-3g_singlet_distance_100_charge_0_grouping"
+        else:
+            ham_name = mol + "_sto-3g_triplet_1+_distance_100_charge_1_grouping"
+
+        per_pf: Dict[PFLabel, Dict[str, Any]] = {}
+        for pf_label in n_w_list:
+            if pf_label == "10th(Morales)" and qubits == 30:
+                continue
+            try:
+                if source == "df":
+                    per_pf[pf_label] = estimate_df_surface_code_task_resources(
+                        ham_name,
+                        pf_label,
+                        target_error=target_error,
+                        p_th=p_th,
+                        a_eff_values=a_eff_values,
+                        p_phys_values=p_phys_values,
+                        delta_fail_values=delta_fail_values,
+                        code_distances=code_distances,
+                        runtime_key=runtime_key,
+                        use_original=use_original,
+                    )
+                elif source == "gr":
+                    per_pf[pf_label] = estimate_grouped_surface_code_task_resources(
+                        ham_name,
+                        pf_label,
+                        target_error=target_error,
+                        p_th=p_th,
+                        a_eff_values=a_eff_values,
+                        p_phys_values=p_phys_values,
+                        delta_fail_values=delta_fail_values,
+                        code_distances=code_distances,
+                        runtime_key=runtime_key,
+                        use_original=use_original,
+                    )
+                else:
+                    raise ValueError(f"Unsupported source: {source}")
+            except Exception as exc:
+                if error_on_missing:
+                    raise
+                errors.append(f"{ham_name}_Operator_{pf_label}: {exc}")
+                continue
+        if per_pf:
+            results[int(qubits)] = per_pf
+
+    if not results and errors:
+        preview = "; ".join(errors[:4])
+        suffix = "" if len(errors) <= 4 else f"; ... ({len(errors)} entries)"
+        raise RuntimeError(
+            "surface_code task-resource sweep produced no valid data. "
+            f"First errors: {preview}{suffix}"
+        )
+    return results
+
+
+def surface_code_task_resource_sweep_grouped(
+    Hchain: int,
+    n_w_list: Sequence[PFLabel],
+    *,
+    target_error: float = TARGET_ERROR,
+    p_th: float = SURFACE_CODE_P_TH,
+    a_eff_values: Sequence[float] | None = None,
+    p_phys_values: Sequence[float] | None = None,
+    delta_fail_values: Sequence[float] | None = None,
+    code_distances: Sequence[int] | None = None,
+    runtime_key: str = SURFACE_CODE_RUNTIME_METRIC,
+    use_original: bool = False,
+    error_on_missing: bool = True,
+) -> Dict[int, Dict[PFLabel, Dict[str, Any]]]:
+    """Grouped artifact 群に対して surface-code タスク資源をまとめて見積もる。"""
+    return _surface_code_task_resource_sweep(
+        Hchain,
+        n_w_list,
+        source="gr",
+        target_error=target_error,
+        p_th=p_th,
+        a_eff_values=a_eff_values,
+        p_phys_values=p_phys_values,
+        delta_fail_values=delta_fail_values,
+        code_distances=code_distances,
+        runtime_key=runtime_key,
+        use_original=use_original,
+        error_on_missing=error_on_missing,
+    )
+
+
+def _surface_code_metric_label(metric: str) -> str:
+    """surface-code 指標名から軸ラベルを返す。"""
+    labels = {
+        "total_magic_state_count": "Total magic-state count",
+        "total_magic_state_depth": "Total magic-state depth",
+        "total_runtime": "Total runtime",
+        "total_runtime_with_topology": "Total runtime (with topology)",
+        "total_runtime_without_topology": "Total runtime (without topology)",
+        "total_qubit_volume": "Total qubit volume",
+        "d_min": "Minimum code distance",
+        "p_fail_task": "Task failure probability",
+        "p_fail_step": "Step failure probability",
+        "lambda_task": "Task failure-rate proxy",
+        "lambda_step": "Step failure-rate proxy",
+        "p_cycle_logical": "Logical cycle failure rate",
+    }
+    return labels.get(metric, metric.replace("_", " "))
+
+
+def _match_surface_code_scenario(
+    scenario: Mapping[str, Any],
+    *,
+    a_eff: float | None,
+    p_phys: float | None,
+    delta_fail: float | None,
+) -> bool:
+    """scenario が指定パラメータに一致するかを判定する。"""
+    if a_eff is not None and not math.isclose(float(scenario["a_eff"]), float(a_eff)):
+        return False
+    if p_phys is not None and not math.isclose(float(scenario["p_phys"]), float(p_phys)):
+        return False
+    if delta_fail is not None and not math.isclose(
+        float(scenario["delta_fail"]),
+        float(delta_fail),
+    ):
+        return False
+    return True
+
+
+def _pick_surface_code_scenario(
+    result: Mapping[str, Any],
+    *,
+    a_eff: float | None,
+    p_phys: float | None,
+    delta_fail: float | None,
+) -> Mapping[str, Any]:
+    """result 内の scenario から指定条件に一致する 1 件を選ぶ。"""
+    scenarios = result.get("scenarios")
+    if not isinstance(scenarios, Sequence):
+        raise ValueError("surface_code result missing scenarios.")
+    matched = [
+        scenario
+        for scenario in scenarios
+        if isinstance(scenario, Mapping)
+        and _match_surface_code_scenario(
+            scenario,
+            a_eff=a_eff,
+            p_phys=p_phys,
+            delta_fail=delta_fail,
+        )
+    ]
+    if len(matched) == 1:
+        return matched[0]
+    if len(matched) == 0:
+        raise ValueError(
+            "No surface_code scenario matched "
+            f"(a_eff={a_eff}, p_phys={p_phys}, delta_fail={delta_fail})."
+        )
+    raise ValueError(
+        "Multiple surface_code scenarios matched. "
+        "Specify a_eff, p_phys, and delta_fail more narrowly."
+    )
+
+
+def _surface_code_result_metric_value(
+    result: Mapping[str, Any],
+    *,
+    metric: str,
+    a_eff: float | None = None,
+    p_phys: float | None = None,
+    delta_fail: float | None = None,
+) -> float:
+    """surface-code 推定結果から描画対象の値を取り出す。"""
+    totals = result.get("totals")
+    if isinstance(totals, Mapping) and metric in totals:
+        return float(totals[metric])
+
+    scenario = _pick_surface_code_scenario(
+        result,
+        a_eff=a_eff,
+        p_phys=p_phys,
+        delta_fail=delta_fail,
+    )
+    if metric == "d_min":
+        d_min = scenario.get("d_min")
+        if d_min is None:
+            raise ValueError(
+                "surface_code scenario did not meet target within checked code distances."
+            )
+        return float(d_min)
+
+    value = scenario.get(metric)
+    if value is None:
+        raise ValueError(f"Unsupported surface_code metric: {metric}")
+    return float(value)
+
+
+def _surface_code_task_resource_series(
+    sweep_results: Mapping[int, Mapping[PFLabel, Mapping[str, Any]]],
+    n_w_list: Sequence[PFLabel],
+    *,
+    metric: str,
+    a_eff: float | None = None,
+    p_phys: float | None = None,
+    delta_fail: float | None = None,
+    error_on_missing: bool = False,
+    source: str = "df",
+) -> Dict[str, Dict[str, List[float]]]:
+    """sweep 結果から PF 別プロット系列を構築する。"""
+    series: DefaultDict[str, Dict[str, List[float]]] = defaultdict(
+        lambda: {"x": [], "y": []}
+    )
+    missing_messages: List[str] = []
+    for qubits in sorted(sweep_results.keys()):
+        per_pf = sweep_results[qubits]
+        for pf_label in n_w_list:
+            result = per_pf.get(pf_label)
+            if not isinstance(result, Mapping):
+                continue
+            try:
+                value = _surface_code_result_metric_value(
+                    result,
+                    metric=metric,
+                    a_eff=a_eff,
+                    p_phys=p_phys,
+                    delta_fail=delta_fail,
+                )
+            except Exception as exc:
+                if error_on_missing:
+                    raise
+                msg = (
+                    f"{result.get('ham_name', 'unknown')}_Operator_{pf_label}: {exc}"
+                )
+                missing_messages.append(msg)
+                print(f"[surface-code][skip {source}] {msg}")
+                continue
+            if value <= 0:
+                continue
+            series[str(pf_label)]["x"].append(float(qubits))
+            series[str(pf_label)]["y"].append(float(value))
+    series_dict = {k: {"x": list(v["x"]), "y": list(v["y"])} for k, v in series.items()}
+    if missing_messages:
+        series_dict["_missing"] = {"messages": missing_messages}
+    return series_dict
+
+
+def surface_code_task_resource_extrapolation(
+    Hchain: int,
+    n_w_list: Sequence[PFLabel],
+    *,
+    source: str = "df",
+    metric: str = "total_magic_state_count",
+    target_error: float = TARGET_ERROR,
+    p_th: float = SURFACE_CODE_P_TH,
+    a_eff: float | None = None,
+    p_phys: float | None = None,
+    delta_fail: float | None = None,
+    a_eff_values: Sequence[float] | None = None,
+    p_phys_values: Sequence[float] | None = None,
+    delta_fail_values: Sequence[float] | None = None,
+    code_distances: Sequence[int] | None = None,
+    runtime_key: str = SURFACE_CODE_RUNTIME_METRIC,
+    use_original: bool = False,
+    show_bands: bool = True,
+    band_height: float = 0.06,
+    band_alpha: float = 0.28,
+    error_on_missing: bool = False,
+) -> Dict[str, Dict[str, List[float]]]:
+    """複数分子・複数 PF の surface-code 資源を同時プロットする。"""
+    if source == "df":
+        sweep_results = surface_code_task_resource_sweep_df(
+            Hchain,
+            n_w_list,
+            target_error=target_error,
+            p_th=p_th,
+            a_eff_values=a_eff_values,
+            p_phys_values=p_phys_values,
+            delta_fail_values=delta_fail_values,
+            code_distances=code_distances,
+            runtime_key=runtime_key,
+            use_original=use_original,
+            error_on_missing=error_on_missing,
+        )
+    elif source == "gr":
+        sweep_results = surface_code_task_resource_sweep_grouped(
+            Hchain,
+            n_w_list,
+            target_error=target_error,
+            p_th=p_th,
+            a_eff_values=a_eff_values,
+            p_phys_values=p_phys_values,
+            delta_fail_values=delta_fail_values,
+            code_distances=code_distances,
+            runtime_key=runtime_key,
+            use_original=use_original,
+            error_on_missing=error_on_missing,
+        )
+    else:
+        raise ValueError(f"Unsupported source: {source}")
+
+    series = _surface_code_task_resource_series(
+        sweep_results,
+        n_w_list,
+        metric=metric,
+        a_eff=a_eff,
+        p_phys=p_phys,
+        delta_fail=delta_fail,
+        error_on_missing=error_on_missing,
+        source=source,
+    )
+    missing_info = series.pop("_missing", None)
+    if not series:
+        details = ""
+        if isinstance(missing_info, Mapping):
+            messages = list(missing_info.get("messages", []))
+            if messages:
+                preview = "; ".join(str(msg) for msg in messages[:4])
+                suffix = "" if len(messages) <= 4 else f"; ... ({len(messages)} entries)"
+                details = f" Missing examples: {preview}{suffix}"
+        raise FileNotFoundError(
+            "No valid surface_code data found for "
+            f"source={source}, metric={metric}. "
+            "The most common cause is that the relevant artifact does not yet have "
+            "`surface_code_step` attached. Populate it with "
+            "`attach_df_surface_code_step_metrics_from_compile_info_json(...)` or "
+            "`attach_grouped_surface_code_step_metrics_from_compile_info_json(...)`."
+            f"{details}"
+        )
+
+    plt.figure(figsize=(8, 6), dpi=200)
+    first_x = min(
+        float(min(points["x"]))
+        for points in series.values()
+        if points["x"]
+    )
+    for pf_label in n_w_list:
+        key = str(pf_label)
+        points = series.get(key)
+        if not points:
+            continue
+        x = np.asarray(points["x"], dtype=float)
+        y = np.asarray(points["y"], dtype=float)
+        order = np.argsort(x)
+        x = x[order]
+        y = y[order]
+        label = label_replace(key)
+        for x_i, y_i in zip(x, y):
+            plt.plot(
+                x_i,
+                y_i,
+                ls="None",
+                marker=MARKER_MAP.get(key, "o"),
+                color=COLOR_MAP.get(key, None),
+                label=label if math.isclose(float(x_i), first_x) else None,
+            )
+
+    ax = plt.gca()
+    set_loglog_axes(ax)
+    x_values = [x for points in series.values() for x in points["x"]]
+    x_min = float(min(x_values))
+    x_max = float(max(x_values))
+    if x_max <= x_min:
+        x_min *= 0.95
+        x_max *= 1.05
+    ax.set_xlim(x_min, x_max)
+
+    _apply_loglog_fit_with_bands(
+        ax,
+        series,
+        show_bands=show_bands,
+        band_height=band_height,
+        band_alpha=band_alpha,
+    )
+
+    ax.set_xlabel("Num qubits", fontsize=15)
+    ax.set_ylabel(_surface_code_metric_label(metric), fontsize=15)
+    ax.grid(True, which="minor", axis="y", linestyle=":", linewidth=0.5, alpha=0.35)
+    ax.grid(True, which="major", axis="y", linestyle="-", linewidth=0.8, alpha=0.6)
+    plt.tight_layout()
+    plt.show()
+    return series
 
 
 def _load_grouped_artifact_payload(

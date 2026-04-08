@@ -18,3 +18,5 @@ DF実装仕様書.md
 nohup.out
 jupyter.log
 artifacts/df_ground_state
+surface_code
+artifacts/surface_code_cache

@@ -1529,6 +1529,8 @@ def df_ground_state_physical_sector(
             {
                 "energy": float(np.real_if_close(energy)),
                 "state": state,
+                "basis_indices": basis_indices,
+                "full_dim": int(2**model.N),
                 "info": info,
             },
         )
@@ -1803,10 +1805,25 @@ def _df_sector_ground_state_artifact_name(
 
 
 def _save_df_ground_state_artifact(file_name: str, data: dict[str, object]) -> None:
+    payload = dict(data)
+    state = payload.get("state")
+    basis_indices = payload.get("basis_indices")
+    if state is not None and basis_indices is not None:
+        state_array = np.asarray(state, dtype=np.complex128).reshape(-1)
+        basis_array = np.asarray(basis_indices, dtype=np.int64).reshape(-1)
+        if basis_array.size == 0:
+            restricted_state = np.zeros(0, dtype=np.complex128)
+        else:
+            restricted_state = state_array[basis_array]
+        basis_dtype = np.uint32 if int(state_array.size) <= np.iinfo(np.uint32).max else np.uint64
+        payload["restricted_state"] = restricted_state
+        payload["basis_indices"] = basis_array.astype(basis_dtype, copy=False)
+        payload["full_dim"] = int(payload.get("full_dim", state_array.size))
+        payload.pop("state", None)
     PICKLE_DIR_DF_GROUND_STATE_PATH.mkdir(parents=True, exist_ok=True)
     path = PICKLE_DIR_DF_GROUND_STATE_PATH / file_name
     with path.open("wb") as f:
-        pickle.dump(data, f)
+        pickle.dump(payload, f)
 
 
 def _load_df_ground_state_artifact(
@@ -1820,16 +1837,131 @@ def _load_df_ground_state_artifact(
     if not isinstance(data, dict):
         return None
     energy = data.get("energy")
-    state = data.get("state")
     info = data.get("info")
-    if energy is None or state is None or not isinstance(info, dict):
+    if energy is None or not isinstance(info, dict):
         return None
     try:
         energy_value = float(np.real_if_close(energy))
     except (TypeError, ValueError):
         return None
+
+    state = data.get("state")
+    if state is not None:
+        state_array = np.asarray(state, dtype=np.complex128).reshape(-1)
+        return energy_value, state_array, dict(info)
+
+    restricted_state = data.get("restricted_state")
+    basis_indices = data.get("basis_indices")
+    if restricted_state is None or basis_indices is None:
+        return None
+    restricted_array = np.asarray(restricted_state, dtype=np.complex128).reshape(-1)
+    basis_array = np.asarray(basis_indices, dtype=np.int64).reshape(-1)
+    full_dim = data.get("full_dim")
+    if full_dim is None:
+        num_qubits = info.get("num_qubits")
+        if num_qubits is None:
+            return None
+        full_dim = 2 ** int(num_qubits)
+    full_state = np.zeros(int(full_dim), dtype=np.complex128)
+    full_state[basis_array] = restricted_array
+    return energy_value, full_state, dict(info)
+
+
+def _rewrite_df_ground_state_artifact_compact(
+    file_name: str,
+) -> dict[str, object]:
+    path = PICKLE_DIR_DF_GROUND_STATE_PATH / file_name
+    if not path.exists():
+        raise FileNotFoundError(path)
+    with path.open("rb") as f:
+        data = pickle.load(f)
+    if not isinstance(data, dict):
+        raise ValueError(f"Unexpected artifact format: {path}")
+    if data.get("state") is None:
+        return {
+            "file_name": file_name,
+            "path": str(path),
+            "rewritten": False,
+            "already_compact": True,
+            "size_before": path.stat().st_size,
+            "size_after": path.stat().st_size,
+        }
+
+    energy = data.get("energy")
+    info = data.get("info")
+    state = data.get("state")
+    if energy is None or state is None or not isinstance(info, dict):
+        raise ValueError(f"Missing fields in artifact: {path}")
     state_array = np.asarray(state, dtype=np.complex128).reshape(-1)
-    return energy_value, state_array, dict(info)
+    num_qubits = info.get("num_qubits")
+    nelec_alpha = info.get("nelec_alpha")
+    nelec_beta = info.get("nelec_beta")
+    if num_qubits is None or nelec_alpha is None or nelec_beta is None:
+        basis_indices = np.flatnonzero(np.abs(state_array) > 0).astype(np.int64, copy=False)
+    else:
+        num_qubits_i = int(num_qubits)
+        n_electrons = int(nelec_alpha) + int(nelec_beta)
+        sz_value = int(nelec_alpha) - int(nelec_beta)
+        try:
+            basis_indices = np.asarray(
+                jw_sz_indices(sz_value, num_qubits_i, n_electrons=n_electrons),
+                dtype=np.int64,
+            )
+        except ValueError:
+            basis_indices = np.flatnonzero(np.abs(state_array) > 0).astype(np.int64, copy=False)
+    size_before = path.stat().st_size
+    _save_df_ground_state_artifact(
+        file_name,
+        {
+            "energy": float(np.real_if_close(energy)),
+            "state": state_array,
+            "basis_indices": basis_indices,
+            "full_dim": int(state_array.size),
+            "info": info,
+        },
+    )
+    size_after = path.stat().st_size
+    return {
+        "file_name": file_name,
+        "path": str(path),
+        "rewritten": True,
+        "already_compact": False,
+        "size_before": size_before,
+        "size_after": size_after,
+        "bytes_saved": max(0, size_before - size_after),
+    }
+
+
+def rewrite_df_ground_state_artifacts_compact(
+    *,
+    file_names: Sequence[str] | None = None,
+    debug_print: Callable[[str], None] = print,
+) -> list[dict[str, object]]:
+    if file_names is None:
+        if not PICKLE_DIR_DF_GROUND_STATE_PATH.exists():
+            return []
+        targets = sorted(
+            p.name for p in PICKLE_DIR_DF_GROUND_STATE_PATH.iterdir() if p.is_file()
+        )
+    else:
+        targets = [str(name) for name in file_names]
+    results: list[dict[str, object]] = []
+    for file_name in targets:
+        result = _rewrite_df_ground_state_artifact_compact(file_name)
+        results.append(result)
+        size_before = int(result.get("size_before", 0))
+        size_after = int(result.get("size_after", 0))
+        bytes_saved = int(result.get("bytes_saved", 0))
+        if bool(result.get("already_compact", False)):
+            debug_print(
+                f"df_ground_state compact: {file_name} already_compact size={size_after}"
+            )
+        else:
+            debug_print(
+                f"df_ground_state compact: {file_name} {size_before} -> {size_after} bytes "
+                f"(saved {bytes_saved} bytes)"
+            )
+    return results
 
 
 def _collect_df_rz_layer_metrics(costs: dict[str, object]) -> dict[str, int]:
@@ -3610,6 +3742,8 @@ def df_trotter_energy_error_curve(
                         {
                             "energy": float(np.real_if_close(energy_sector_ref)),
                             "state": psi_sector_ref,
+                            "basis_indices": basis_indices,
+                            "full_dim": int(2**model.N),
                             "info": sector_info,
                         },
                     )
@@ -4680,6 +4814,7 @@ def df_trotter_energy_error_plot_sector(
 
 __all__ = [
     "df_ground_state_physical_sector",
+    "rewrite_df_ground_state_artifacts_compact",
     "df_trotter_energy_error_curve",
     "df_trotter_energy_error_plot",
     "df_trotter_energy_error_curve_sector",
