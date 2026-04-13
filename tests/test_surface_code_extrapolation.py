@@ -4,6 +4,8 @@ import pickle
 import subprocess
 from pathlib import Path
 
+from qiskit import QuantumCircuit
+
 from trotterlib import cost_extrapolation as ce
 
 
@@ -28,6 +30,40 @@ def test_normalize_surface_code_step_metrics_extracts_required_fields() -> None:
     assert metrics["qubit_volume"] == 999
     assert metrics["gate_count"] == 111
     assert metrics["source"] == "compile_info.json"
+
+
+def test_normalize_surface_code_step_metrics_keeps_t_alias_fields() -> None:
+    raw = {
+        "magic_state_consumption_count": 123,
+        "magic_state_consumption_depth": 45,
+        "runtime": 678,
+        "runtime_without_topology": 640,
+        "qubit_volume": 999,
+        "t_count": 123,
+        "t_depth": 45,
+    }
+
+    metrics = ce.normalize_surface_code_step_metrics(raw)
+
+    assert metrics["t_count"] == 123
+    assert metrics["t_depth"] == 45
+
+
+def test_normalize_surface_code_step_metrics_backfills_t_aliases_for_decompose_only() -> None:
+    raw = {
+        "magic_state_consumption_count": 123,
+        "magic_state_consumption_depth": 45,
+        "runtime": 678,
+        "runtime_without_topology": 640,
+        "qubit_volume": 0,
+        "compile_mode": "decompose_only",
+        "generator": "decompose_only_ir",
+    }
+
+    metrics = ce.normalize_surface_code_step_metrics(raw)
+
+    assert metrics["t_count"] == 123
+    assert metrics["t_depth"] == 45
 
 
 def test_attach_df_surface_code_step_metrics_updates_payload(
@@ -581,7 +617,7 @@ def test_generate_surface_code_step_metrics_decompose_only_skips_compile(
     monkeypatch.setattr(
         ce,
         "_build_grouped_surface_code_step_circuit",
-        lambda *args, **kwargs: object(),
+        lambda *args, **kwargs: QuantumCircuit(1),
     )
     monkeypatch.setattr(
         ce,
@@ -590,7 +626,12 @@ def test_generate_surface_code_step_metrics_decompose_only_skips_compile(
     )
     monkeypatch.setattr(
         ce,
-        "_surface_code_qasm_text_from_circuit",
+        "_surface_code_basis_circuit_from_circuit",
+        lambda *args, **kwargs: QuantumCircuit(1),
+    )
+    monkeypatch.setattr(
+        ce,
+        "_surface_code_qasm_text_from_basis_circuit",
         lambda *args, **kwargs: "OPENQASM 2.0;",
     )
 
@@ -632,6 +673,103 @@ def test_generate_surface_code_step_metrics_decompose_only_skips_compile(
     assert "- ir::decompose_inst" in opt_yaml_text
     assert "- ir::recursive_inliner" not in opt_yaml_text
     assert "- ir::static_condition_pruning" not in opt_yaml_text
+
+
+def test_surface_code_compose_ir_summaries_adds_counts_and_depths() -> None:
+    left = {
+        "num_qubits": 1,
+        "magic_count": 2,
+        "magic_depth": 2,
+        "magic_matrix": [[2]],
+        "gate_count": 3,
+        "gate_depth": 3,
+        "gate_matrix": [[3]],
+    }
+    right = {
+        "num_qubits": 1,
+        "magic_count": 4,
+        "magic_depth": 4,
+        "magic_matrix": [[4]],
+        "gate_count": 5,
+        "gate_depth": 5,
+        "gate_matrix": [[5]],
+    }
+
+    summary = ce._surface_code_compose_ir_summaries(left, right)
+
+    assert summary["magic_count"] == 6
+    assert summary["magic_depth"] == 6
+    assert summary["gate_count"] == 8
+    assert summary["gate_depth"] == 8
+
+
+def test_generate_surface_code_step_metrics_decompose_only_uses_chunking_for_large_basis(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    monkeypatch.setattr(ce, "SURFACE_CODE_COMPILE_MODE", "decompose_only")
+    monkeypatch.setattr(ce, "SURFACE_CODE_DECOMPOSE_CHUNK_MAX_OPS", 1)
+    qcsf = tmp_path / "qcsf"
+    qcsf.write_text("", encoding="utf-8")
+    topo = tmp_path / "topology.yaml"
+    topo.write_text("", encoding="utf-8")
+    monkeypatch.setattr(ce, "SURFACE_CODE_QCSF_PATH", qcsf)
+    monkeypatch.setattr(ce, "SURFACE_CODE_TOPOLOGY_PATH", topo)
+    monkeypatch.setattr(ce, "_surface_code_step_time", lambda *args, **kwargs: 0.25)
+    monkeypatch.setattr(
+        ce,
+        "_surface_code_rotation_precision",
+        lambda *args, **kwargs: 1.0e-5,
+    )
+    monkeypatch.setattr(
+        ce,
+        "_build_grouped_surface_code_step_circuit",
+        lambda *args, **kwargs: QuantumCircuit(1),
+    )
+    monkeypatch.setattr(
+        ce,
+        "_surface_code_runtime_root",
+        lambda *args, **kwargs: tmp_path,
+    )
+    monkeypatch.setattr(ce, "_ensure_surface_code_binary_usable", lambda *args, **kwargs: None)
+
+    qc_basis = QuantumCircuit(1)
+    qc_basis.x(0)
+    qc_basis.x(0)
+    monkeypatch.setattr(
+        ce,
+        "_surface_code_basis_circuit_from_circuit",
+        lambda *args, **kwargs: qc_basis,
+    )
+
+    called = {"chunked": False}
+
+    def fake_chunked(*args, **kwargs):
+        called["chunked"] = True
+        return {
+            "magic_state_consumption_count": 100,
+            "magic_state_consumption_depth": 80,
+            "runtime": 123,
+            "runtime_without_topology": 123,
+            "qubit_volume": 0,
+            "target_error": 1.0e-3,
+            "step_time": 0.25,
+            "rotation_precision": 1.0e-5,
+            "generator": "decompose_only_ir_chunked",
+            "compile_mode": "decompose_only",
+        }
+
+    monkeypatch.setattr(ce, "_surface_code_chunked_decompose_only_step_metrics", fake_chunked)
+
+    metrics = ce._generate_surface_code_step_metrics(
+        "H3_dummy",
+        "2nd",
+        source="gr",
+        target_error=1.0e-3,
+    )
+
+    assert called["chunked"] is True
+    assert metrics["generator"] == "decompose_only_ir_chunked"
 
 
 def test_surface_code_opt_passes_lightweight_include_compile_shortcuts(monkeypatch) -> None:
@@ -787,6 +925,42 @@ def test_estimate_grouped_surface_code_task_resources_finds_min_code_distance(
     assert by_p_phys[1.0e-3]["meets_target"] is True
 
 
+def test_estimate_surface_code_task_resources_includes_total_t_aliases(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        ce,
+        "_load_compare_alpha_and_exponent",
+        lambda *args, **kwargs: (1.0e-3, 2.0),
+    )
+    monkeypatch.setattr(
+        ce,
+        "_load_surface_code_step_metrics",
+        lambda *args, **kwargs: {
+            "magic_state_consumption_count": 40,
+            "magic_state_consumption_depth": 16,
+            "t_count": 40,
+            "t_depth": 16,
+            "runtime": 90,
+            "runtime_without_topology": 80,
+            "qubit_volume": 8,
+        },
+    )
+
+    result = ce.estimate_grouped_surface_code_task_resources(
+        "H3_dummy",
+        "2nd",
+        target_error=1.0e-2,
+        a_eff_values=[1.0],
+        p_phys_values=[1.0e-3],
+        delta_fail_values=[1.0e-2],
+        code_distances=[3, 5, 7],
+    )
+
+    assert result["totals"]["total_t_count"] == result["totals"]["total_magic_state_count"]
+    assert result["totals"]["total_t_depth"] == result["totals"]["total_magic_state_depth"]
+
+
 def test_surface_code_task_resource_extrapolation_uses_grouped_source(
     monkeypatch,
 ) -> None:
@@ -874,3 +1048,83 @@ def test_surface_code_task_resource_extrapolation_supports_d_min_metric(
     )
 
     assert series == {"2nd": {"x": [6.0, 8.0], "y": [7.0, 9.0]}}
+
+
+def test_surface_code_task_resource_extrapolation_supports_total_t_depth_metric(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        ce,
+        "surface_code_task_resource_sweep_grouped",
+        lambda *args, **kwargs: {
+            6: {
+                "2nd": {
+                    "ham_name": "H3_dummy",
+                    "totals": {"total_t_depth": 150.0},
+                    "scenarios": [],
+                }
+            },
+            8: {
+                "2nd": {
+                    "ham_name": "H4_dummy",
+                    "totals": {"total_t_depth": 250.0},
+                    "scenarios": [],
+                }
+            },
+        },
+    )
+    monkeypatch.setattr(ce.plt, "show", lambda: None)
+
+    series = ce.surface_code_task_resource_extrapolation(
+        Hchain=4,
+        n_w_list=["2nd"],
+        source="gr",
+        metric="total_t_depth",
+        show_bands=False,
+    )
+
+    assert series == {"2nd": {"x": [6.0, 8.0], "y": [150.0, 250.0]}}
+
+
+def test_t_depth_extrapolation_compare_conventional_decompose(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        ce,
+        "_conventional_t_depth_series",
+        lambda *args, **kwargs: {
+            "2nd": {"x": [6.0, 8.0], "y": [100.0, 200.0]},
+        },
+    )
+    monkeypatch.setattr(
+        ce,
+        "surface_code_task_resource_sweep_grouped",
+        lambda *args, **kwargs: {
+            6: {
+                "2nd": {
+                    "ham_name": "H3_dummy",
+                    "totals": {"total_t_depth": 150.0},
+                    "scenarios": [],
+                }
+            },
+            8: {
+                "2nd": {
+                    "ham_name": "H4_dummy",
+                    "totals": {"total_t_depth": 250.0},
+                    "scenarios": [],
+                }
+            },
+        },
+    )
+    monkeypatch.setattr(ce.plt, "show", lambda: None)
+
+    series = ce.t_depth_extrapolation_compare_conventional_decompose(
+        Hchain=4,
+        n_w_list=["2nd"],
+        source="gr",
+    )
+
+    assert series == {
+        "conventional": {"2nd": {"x": [6.0, 8.0], "y": [100.0, 200.0]}},
+        "decompose": {"2nd": {"x": [6.0, 8.0], "y": [150.0, 250.0]}},
+    }

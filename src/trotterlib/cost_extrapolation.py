@@ -8,6 +8,7 @@ import re
 import subprocess
 import time
 from collections import defaultdict
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 from typing import (
     Any,
@@ -68,6 +69,8 @@ from .config import (
     SURFACE_CODE_STEP_GROUPED_ORIGINAL_PATH,
     SURFACE_CODE_STEP_GROUPED_PATH,
     SURFACE_CODE_DF_ROTATION_LAYER_PREFERRED_KEY,
+    SURFACE_CODE_DECOMPOSE_CHUNK_MAX_OPS,
+    SURFACE_CODE_DECOMPOSE_MAX_WORKERS,
     SURFACE_CODE_PROXY_DEPTH_MULTIPLIER,
     SURFACE_CODE_PROXY_GATE_COUNT_PER_MAGIC,
     SURFACE_CODE_PROXY_RUNTIME_PER_MAGIC,
@@ -895,6 +898,8 @@ def normalize_surface_code_step_metrics(
         "measurement_feedback_depth",
         "magic_factory_count",
         "chip_cell_count",
+        "t_count",
+        "t_depth",
     )
 
     normalized: Dict[str, Any] = {}
@@ -934,6 +939,24 @@ def normalize_surface_code_step_metrics(
             normalized[meta_key] = str(value)
     if "auto_generated" in metrics:
         normalized["auto_generated"] = bool(metrics.get("auto_generated"))
+    compile_mode = normalized.get("compile_mode")
+    generator = normalized.get("generator")
+    if (
+        "t_count" not in normalized
+        and (
+            compile_mode == "decompose_only"
+            or generator == "decompose_only_ir"
+        )
+    ):
+        normalized["t_count"] = normalized["magic_state_consumption_count"]
+    if (
+        "t_depth" not in normalized
+        and (
+            compile_mode == "decompose_only"
+            or generator == "decompose_only_ir"
+        )
+    ):
+        normalized["t_depth"] = normalized["magic_state_consumption_depth"]
     return normalized
 
 
@@ -1113,6 +1136,8 @@ def _surface_code_proxy_step_metrics(
     metrics = {
         "magic_state_consumption_count": magic_count,
         "magic_state_consumption_depth": magic_depth,
+        "t_count": magic_count,
+        "t_depth": magic_depth,
         "runtime": runtime_wo,
         "runtime_without_topology": runtime_wo,
         "qubit_volume": 0,
@@ -1377,8 +1402,36 @@ def _surface_code_ir_summary_from_opt_json(
     return _summarize(circuit_name)
 
 
-def _surface_code_decompose_only_step_metrics(
-    opt_ir_path: str | Path,
+def _surface_code_compose_ir_summaries(
+    left: Mapping[str, Any],
+    right: Mapping[str, Any],
+) -> Dict[str, Any]:
+    """2 つの逐次 IR summary を合成する。"""
+    num_qubits = int(left["num_qubits"])
+    if int(right["num_qubits"]) != num_qubits:
+        raise ValueError("Cannot compose IR summaries with different num_qubits.")
+
+    magic_matrix = _surface_code_maxplus_compose(
+        left["magic_matrix"],
+        right["magic_matrix"],
+    )
+    gate_matrix = _surface_code_maxplus_compose(
+        left["gate_matrix"],
+        right["gate_matrix"],
+    )
+    return {
+        "num_qubits": num_qubits,
+        "magic_count": int(left["magic_count"]) + int(right["magic_count"]),
+        "magic_depth": int(_surface_code_maxplus_depth(magic_matrix)),
+        "magic_matrix": magic_matrix,
+        "gate_count": int(left["gate_count"]) + int(right["gate_count"]),
+        "gate_depth": int(_surface_code_maxplus_depth(gate_matrix)),
+        "gate_matrix": gate_matrix,
+    }
+
+
+def _surface_code_decompose_only_metrics_from_summary(
+    summary: Mapping[str, Any],
     *,
     ham_name: str,
     pf_label: PFLabel,
@@ -1386,9 +1439,10 @@ def _surface_code_decompose_only_step_metrics(
     target_error: float,
     step_time: float,
     rotation_precision: float,
+    compile_info_path: str | Path,
+    generator: str,
 ) -> Dict[str, Any]:
-    """surface_code の parse+opt のみを用いた高速 step metrics。"""
-    summary = _surface_code_ir_summary_from_opt_json(opt_ir_path, circuit_name="main")
+    """IR summary から decompose-only step metrics を構築する。"""
     gate_count = int(summary["gate_count"])
     gate_depth = int(summary["gate_depth"])
     magic_count = int(summary["magic_count"])
@@ -1397,6 +1451,8 @@ def _surface_code_decompose_only_step_metrics(
     metrics = {
         "magic_state_consumption_count": magic_count,
         "magic_state_consumption_depth": magic_depth,
+        "t_count": magic_count,
+        "t_depth": magic_depth,
         "runtime": runtime_wo,
         "runtime_without_topology": runtime_wo,
         "qubit_volume": 0,
@@ -1410,15 +1466,40 @@ def _surface_code_decompose_only_step_metrics(
         "step_time": float(step_time),
         "rotation_precision": float(rotation_precision),
         "cache_key": _surface_code_cache_key(float(target_error)),
-        "generator": "decompose_only_ir",
+        "generator": str(generator),
         "auto_generated": True,
         "source": str(source),
         "compile_mode": SURFACE_CODE_COMPILE_MODE,
-        "compile_info_json": str(Path(opt_ir_path).expanduser().resolve()),
+        "compile_info_json": str(Path(compile_info_path).expanduser().resolve()),
     }
     return normalize_surface_code_step_metrics(
         metrics,
         context=f"{ham_name}_Operator_{pf_label}.decompose_only_surface_code_step",
+    )
+
+
+def _surface_code_decompose_only_step_metrics(
+    opt_ir_path: str | Path,
+    *,
+    ham_name: str,
+    pf_label: PFLabel,
+    source: str,
+    target_error: float,
+    step_time: float,
+    rotation_precision: float,
+) -> Dict[str, Any]:
+    """surface_code の parse+opt のみを用いた高速 step metrics。"""
+    summary = _surface_code_ir_summary_from_opt_json(opt_ir_path, circuit_name="main")
+    return _surface_code_decompose_only_metrics_from_summary(
+        summary,
+        ham_name=ham_name,
+        pf_label=pf_label,
+        source=source,
+        target_error=target_error,
+        step_time=step_time,
+        rotation_precision=rotation_precision,
+        compile_info_path=opt_ir_path,
+        generator="decompose_only_ir",
     )
 
 
@@ -2084,12 +2165,12 @@ def _build_grouped_surface_code_step_circuit(
     return qc
 
 
-def _surface_code_qasm_text_from_circuit(
+def _surface_code_basis_circuit_from_circuit(
     qc: Any,
     *,
     runtime_root: Path,
-) -> str:
-    """Qiskit 回路を OpenQASM2 文字列へ変換する。"""
+) -> Any:
+    """Qiskit 回路を surface_code 用 basis gate 回路へ分解する。"""
     env = _prepare_surface_code_runtime_env(runtime_root)
     os.environ.update(
         {
@@ -2111,6 +2192,12 @@ def _surface_code_qasm_text_from_circuit(
         decompose_reps=int(SURFACE_CODE_QASM_DECOMPOSE_REPS),
         optimization_level=0,
     )
+    qc_basis.global_phase = 0.0
+    return qc_basis
+
+
+def _surface_code_qasm_text_from_basis_circuit(qc_basis: Any) -> str:
+    """basis gate 回路を OpenQASM2 文字列へ変換する。"""
     try:
         from qiskit import qasm2
 
@@ -2119,6 +2206,100 @@ def _surface_code_qasm_text_from_circuit(
         if hasattr(qc_basis, "qasm"):
             return str(qc_basis.qasm())
         raise RuntimeError("Failed to export circuit to OpenQASM2.")
+
+
+def _surface_code_qasm_text_from_circuit(
+    qc: Any,
+    *,
+    runtime_root: Path,
+) -> str:
+    """Qiskit 回路を OpenQASM2 文字列へ変換する。"""
+    qc_basis = _surface_code_basis_circuit_from_circuit(qc, runtime_root=runtime_root)
+    return _surface_code_qasm_text_from_basis_circuit(qc_basis)
+
+
+def _surface_code_chunk_qasm_paths(
+    qc_basis: Any,
+    *,
+    runtime_root: Path,
+    max_ops: int,
+) -> List[Dict[str, Any]]:
+    """basis gate 回路を連続チャンクへ分割し、各 chunk の QASM を保存する。"""
+    if int(max_ops) <= 0:
+        raise ValueError(f"max_ops must be positive: {max_ops}")
+
+    from qiskit import QuantumCircuit
+
+    qubit_ids = {id(bit): idx for idx, bit in enumerate(qc_basis.qubits)}
+    clbit_ids = {id(bit): idx for idx, bit in enumerate(getattr(qc_basis, "clbits", []))}
+    num_qubits = len(qc_basis.qubits)
+    num_clbits = len(getattr(qc_basis, "clbits", []))
+    chunks_root = runtime_root / "chunks"
+    chunks_root.mkdir(parents=True, exist_ok=True)
+
+    chunk_specs: List[Dict[str, Any]] = []
+    chunk_index = 0
+    current_count = 0
+    current = QuantumCircuit(num_qubits, num_clbits)
+    current.global_phase = 0.0
+
+    def _flush_chunk(circuit: Any, index: int, op_count: int) -> None:
+        chunk_dir = chunks_root / f"chunk_{index:04d}"
+        chunk_dir.mkdir(parents=True, exist_ok=True)
+        qasm_path = chunk_dir / "step.qasm"
+        ir_path = chunk_dir / "step_ir.json"
+        opt_path = chunk_dir / "step_opt.json"
+        opt_yaml = chunk_dir / "opt.yaml"
+        qasm_path.write_text(
+            _surface_code_qasm_text_from_basis_circuit(circuit),
+            encoding="utf-8",
+        )
+        opt_yaml.write_text(
+            "\n".join(
+                [
+                    f"input: {ir_path}",
+                    "circuit: main",
+                    f"output: {opt_path}",
+                    "pass:",
+                    *[f"- {name}" for name in _surface_code_opt_passes()],
+                    "",
+                ]
+            ),
+            encoding="utf-8",
+        )
+        chunk_specs.append(
+            {
+                "chunk_index": int(index),
+                "chunk_dir": chunk_dir,
+                "qasm_path": qasm_path,
+                "ir_path": ir_path,
+                "opt_path": opt_path,
+                "opt_yaml": opt_yaml,
+                "op_count": int(op_count),
+            }
+        )
+
+    for inst in qc_basis.data:
+        op = inst.operation
+        qargs = [current.qubits[qubit_ids[id(q)]] for q in inst.qubits]
+        cargs = [current.clbits[clbit_ids[id(c)]] for c in inst.clbits]
+        try:
+            op_copy = op.copy()
+        except Exception:
+            op_copy = op
+        current.append(op_copy, qargs, cargs)
+        current_count += 1
+        if current_count >= int(max_ops):
+            _flush_chunk(current, chunk_index, current_count)
+            chunk_index += 1
+            current = QuantumCircuit(num_qubits, num_clbits)
+            current.global_phase = 0.0
+            current_count = 0
+
+    if current_count > 0:
+        _flush_chunk(current, chunk_index, current_count)
+
+    return chunk_specs
 
 
 def _run_surface_code_command(
@@ -2217,6 +2398,152 @@ def _ensure_surface_code_binary_usable(
         [str(qcsf_path), "--help"],
         runtime_root=runtime_root,
         rotation_precision=rotation_precision,
+    )
+
+
+def _surface_code_process_decompose_chunk(
+    *,
+    qcsf_path: str,
+    runtime_root: str,
+    qasm_path: str,
+    ir_path: str,
+    opt_path: str,
+    opt_yaml: str,
+    rotation_precision: float,
+) -> Dict[str, Any]:
+    """decompose-only 用 chunk を parse+opt して IR summary を返す。"""
+    runtime_root_path = Path(runtime_root).expanduser().resolve()
+    _run_surface_code_command(
+        [
+            str(qcsf_path),
+            "parse",
+            "--input",
+            str(qasm_path),
+            "--output",
+            str(ir_path),
+            "--format",
+            "OpenQASM2",
+            "--verbose",
+        ],
+        runtime_root=runtime_root_path,
+        rotation_precision=float(rotation_precision),
+    )
+    _run_surface_code_command(
+        [
+            str(qcsf_path),
+            "opt",
+            "--pipeline",
+            str(opt_yaml),
+            "--verbose",
+        ],
+        runtime_root=runtime_root_path,
+        rotation_precision=float(rotation_precision),
+    )
+    return _surface_code_ir_summary_from_opt_json(opt_path, circuit_name="main")
+
+
+def _surface_code_chunked_decompose_only_step_metrics(
+    qc_basis: Any,
+    *,
+    runtime_root: Path,
+    qcsf_path: Path,
+    ham_name: str,
+    pf_label: PFLabel,
+    source: str,
+    target_error: float,
+    step_time: float,
+    rotation_precision: float,
+) -> Dict[str, Any]:
+    """巨大回路を chunk に分割して decompose-only 指標を集計する。"""
+    max_ops = int(SURFACE_CODE_DECOMPOSE_CHUNK_MAX_OPS)
+    chunk_specs = _surface_code_chunk_qasm_paths(
+        qc_basis,
+        runtime_root=runtime_root,
+        max_ops=max_ops,
+    )
+    if not chunk_specs:
+        raise ValueError("No chunk generated for decompose-only surface-code run.")
+
+    workers = max(1, min(int(SURFACE_CODE_DECOMPOSE_MAX_WORKERS), len(chunk_specs)))
+    _surface_code_log(
+        f"chunked decompose_only: {len(qc_basis.data)} basis ops -> "
+        f"{len(chunk_specs)} chunks (max_ops={max_ops}, workers={workers})",
+        source=source,
+        ham_name=ham_name,
+        pf_label=pf_label,
+        target_error=target_error,
+    )
+
+    started = time.perf_counter()
+    summaries_by_index: Dict[int, Dict[str, Any]] = {}
+    if workers == 1 or len(chunk_specs) == 1:
+        for spec in chunk_specs:
+            summaries_by_index[int(spec["chunk_index"])] = _surface_code_process_decompose_chunk(
+                qcsf_path=str(qcsf_path),
+                runtime_root=str(spec["chunk_dir"]),
+                qasm_path=str(spec["qasm_path"]),
+                ir_path=str(spec["ir_path"]),
+                opt_path=str(spec["opt_path"]),
+                opt_yaml=str(spec["opt_yaml"]),
+                rotation_precision=float(rotation_precision),
+            )
+    else:
+        with ProcessPoolExecutor(max_workers=workers) as executor:
+            future_map = {
+                executor.submit(
+                    _surface_code_process_decompose_chunk,
+                    qcsf_path=str(qcsf_path),
+                    runtime_root=str(spec["chunk_dir"]),
+                    qasm_path=str(spec["qasm_path"]),
+                    ir_path=str(spec["ir_path"]),
+                    opt_path=str(spec["opt_path"]),
+                    opt_yaml=str(spec["opt_yaml"]),
+                    rotation_precision=float(rotation_precision),
+                ): int(spec["chunk_index"])
+                for spec in chunk_specs
+            }
+            for future in as_completed(future_map):
+                chunk_index = future_map[future]
+                summaries_by_index[chunk_index] = future.result()
+
+    ordered_indices = sorted(summaries_by_index.keys())
+    total_summary = summaries_by_index[ordered_indices[0]]
+    for chunk_index in ordered_indices[1:]:
+        total_summary = _surface_code_compose_ir_summaries(
+            total_summary,
+            summaries_by_index[chunk_index],
+        )
+
+    summary_path = runtime_root / "step_opt_chunked_summary.json"
+    with summary_path.open("w", encoding="utf-8") as f:
+        json.dump(
+            {
+                "num_chunks": len(chunk_specs),
+                "max_ops": max_ops,
+                "workers": workers,
+                "summary": total_summary,
+            },
+            f,
+            ensure_ascii=True,
+            indent=2,
+        )
+    _surface_code_log(
+        f"finished chunked decompose_only ({time.perf_counter() - started:.1f}s)",
+        source=source,
+        ham_name=ham_name,
+        pf_label=pf_label,
+        target_error=target_error,
+    )
+    return _surface_code_decompose_only_metrics_from_summary(
+        total_summary,
+        ham_name=ham_name,
+        pf_label=pf_label,
+        source=source,
+        target_error=target_error,
+        step_time=step_time,
+        rotation_precision=rotation_precision,
+        compile_info_path=summary_path,
+        generator="decompose_only_ir_chunked",
     )
 
 
@@ -2345,6 +2672,39 @@ def _generate_surface_code_step_metrics(
     )
 
     _surface_code_log(
+        "building basis-gate circuit",
+        source=source,
+        ham_name=ham_name,
+        pf_label=pf_label,
+        target_error=target_error,
+    )
+    t0 = time.perf_counter()
+    qc_basis = _surface_code_basis_circuit_from_circuit(qc, runtime_root=runtime_root)
+    _surface_code_log(
+        f"built basis-gate circuit ({time.perf_counter() - t0:.1f}s)",
+        source=source,
+        ham_name=ham_name,
+        pf_label=pf_label,
+        target_error=target_error,
+    )
+    basis_op_count = len(qc_basis.data)
+    if (
+        SURFACE_CODE_COMPILE_MODE == "decompose_only"
+        and basis_op_count > int(SURFACE_CODE_DECOMPOSE_CHUNK_MAX_OPS)
+    ):
+        return _surface_code_chunked_decompose_only_step_metrics(
+            qc_basis,
+            runtime_root=runtime_root,
+            qcsf_path=qcsf_path,
+            ham_name=ham_name,
+            pf_label=pf_label,
+            source=source,
+            target_error=float(target_error),
+            step_time=float(step_time),
+            rotation_precision=float(rotation_precision),
+        )
+
+    _surface_code_log(
         "exporting OpenQASM2",
         source=source,
         ham_name=ham_name,
@@ -2352,7 +2712,7 @@ def _generate_surface_code_step_metrics(
         target_error=target_error,
     )
     t0 = time.perf_counter()
-    qasm_text = _surface_code_qasm_text_from_circuit(qc, runtime_root=runtime_root)
+    qasm_text = _surface_code_qasm_text_from_basis_circuit(qc_basis)
     _surface_code_log(
         f"exported OpenQASM2 ({time.perf_counter() - t0:.1f}s)",
         source=source,
@@ -2942,6 +3302,12 @@ def _estimate_surface_code_task_resources(
         step["runtime_without_topology"]
     )
     total_qubit_volume = qpe_factor * step_qubit_volume
+    total_t_count = (
+        qpe_factor * float(step["t_count"]) if "t_count" in step else None
+    )
+    total_t_depth = (
+        qpe_factor * float(step["t_depth"]) if "t_depth" in step else None
+    )
 
     scenarios: List[Dict[str, Any]] = []
     for a_eff in a_eff_list:
@@ -3007,6 +3373,20 @@ def _estimate_surface_code_task_resources(
                     )
                 scenarios.append(scenario)
 
+    totals: Dict[str, Any] = {
+        "total_magic_state_count": float(total_magic_state_count),
+        "total_magic_state_depth": float(total_magic_state_depth),
+        "total_runtime": float(total_runtime),
+        "total_runtime_with_topology": float(total_runtime_with_topology),
+        "total_runtime_without_topology": float(total_runtime_without_topology),
+        "runtime_key": runtime_key,
+        "total_qubit_volume": float(total_qubit_volume),
+    }
+    if total_t_count is not None:
+        totals["total_t_count"] = float(total_t_count)
+    if total_t_depth is not None:
+        totals["total_t_depth"] = float(total_t_depth)
+
     return {
         "ham_name": ham_name,
         "pf_label": str(pf_label),
@@ -3017,17 +3397,7 @@ def _estimate_surface_code_task_resources(
         # existing qpe_factor is used as an effective total block-count proxy.
         "effective_block_count": float(qpe_factor),
         "step_metrics": step,
-        "totals": {
-            "total_magic_state_count": float(total_magic_state_count),
-            "total_magic_state_depth": float(total_magic_state_depth),
-            "total_runtime": float(total_runtime),
-            "total_runtime_with_topology": float(total_runtime_with_topology),
-            "total_runtime_without_topology": float(
-                total_runtime_without_topology
-            ),
-            "runtime_key": runtime_key,
-            "total_qubit_volume": float(total_qubit_volume),
-        },
+        "totals": totals,
         "failure_model": {
             "p_th": float(p_th),
             "code_distances": code_distance_list,
@@ -3221,6 +3591,8 @@ def _surface_code_metric_label(metric: str) -> str:
     labels = {
         "total_magic_state_count": "Total magic-state count",
         "total_magic_state_depth": "Total magic-state depth",
+        "total_t_count": "Total T-count",
+        "total_t_depth": "Total T-depth",
         "total_runtime": "Total runtime",
         "total_runtime_with_topology": "Total runtime (with topology)",
         "total_runtime_without_topology": "Total runtime (without topology)",
@@ -4129,6 +4501,214 @@ def t_depth_extrapolation_compare_gr_df(
         ax.legend(handles_u, labels_u, loc="upper left", framealpha=0.9)
     plt.tight_layout()
     plt.show()
+
+
+def _conventional_t_depth_series(
+    Hchain: int,
+    n_w_list: Sequence[PFLabel],
+    *,
+    source: str,
+    target_error: float = TARGET_ERROR,
+    rz_layer_key: str | None = None,
+    use_original: bool = False,
+    error_on_missing: bool = False,
+) -> Dict[str, Dict[str, List[float]]]:
+    """従来式の T-depth 系列を PF ごとに構築する。"""
+    if Hchain < 3:
+        raise ValueError("Hchain must be >= 3 for t-depth comparison.")
+    if source not in {"gr", "df"}:
+        raise ValueError(f"Unsupported source: {source}")
+
+    _, mol_labels, num_qubits = _hchain_series(Hchain)
+    effective_rz_layer_key = (
+        rz_layer_key
+        if rz_layer_key is not None
+        else "total_nonclifford_z_coloring_depth"
+    )
+    series: DefaultDict[str, Dict[str, List[float]]] = defaultdict(
+        lambda: {"x": [], "y": []}
+    )
+
+    for qubits, mol in zip(num_qubits, mol_labels):
+        if qubits % 4 == 0:
+            ham_name = mol + "_sto-3g_singlet_distance_100_charge_0_grouping"
+        else:
+            ham_name = mol + "_sto-3g_triplet_1+_distance_100_charge_1_grouping"
+
+        for n_w in n_w_list:
+            if n_w == "10th(Morales)" and qubits == 30:
+                continue
+
+            try:
+                coeff, expo = _load_compare_alpha_and_exponent(
+                    ham_name,
+                    n_w,
+                    source=source,
+                    use_original=use_original,
+                )
+                if source == "gr":
+                    N_0 = float(DECOMPO_NUM[mol][n_w])
+                    pf_layer_rz = float(PF_RZ_LAYER[mol][n_w])
+                else:
+                    payload = _load_df_artifact_payload(ham_name, n_w)
+                    rz_layers_raw = payload.get("rz_layers")
+                    if not isinstance(rz_layers_raw, Mapping):
+                        raise ValueError("missing rz_layers")
+                    _metric_key, rz_layer_value = _pick_df_rz_layer_value(
+                        rz_layers_raw, preferred_key=effective_rz_layer_key
+                    )
+                    N_0 = float(rz_layer_value)
+                    pf_layer_rz = float(rz_layer_value)
+
+                t = (target_error / coeff * (expo + 1)) ** (1 / expo)
+                qpe_factor = _qpe_iteration_factor(
+                    float(coeff),
+                    float(expo),
+                    float(target_error),
+                )
+                eps_rot = (t * 0.01 * target_error) / (N_0 * qpe_factor)
+                T_rot = 3 * np.log2(1 / eps_rot)
+                total_t_depth = qpe_factor * pf_layer_rz * T_rot
+            except Exception as exc:
+                if error_on_missing:
+                    raise
+                print(
+                    f"[t-depth][skip {source} conventional] "
+                    f"{ham_name}_Operator_{n_w}: {exc}"
+                )
+                continue
+
+            if total_t_depth <= 0:
+                continue
+            series[str(n_w)]["x"].append(float(qubits))
+            series[str(n_w)]["y"].append(float(total_t_depth))
+
+    return {k: {"x": list(v["x"]), "y": list(v["y"])} for k, v in series.items()}
+
+
+def t_depth_extrapolation_compare_conventional_decompose(
+    Hchain: int,
+    n_w_list: Sequence[PFLabel],
+    *,
+    source: str = "gr",
+    target_error: float = TARGET_ERROR,
+    rz_layer_key: str | None = None,
+    use_original: bool = False,
+    runtime_key: str = SURFACE_CODE_RUNTIME_METRIC,
+    error_on_missing: bool = False,
+) -> Dict[str, Dict[str, Dict[str, List[float]]]]:
+    """従来の T-depth 外挿と decompose-only の T-depth を同一プロットで比較する。"""
+    conventional = _conventional_t_depth_series(
+        Hchain,
+        n_w_list,
+        source=source,
+        target_error=target_error,
+        rz_layer_key=rz_layer_key,
+        use_original=use_original,
+        error_on_missing=error_on_missing,
+    )
+
+    if source == "df":
+        sweep_results = surface_code_task_resource_sweep_df(
+            Hchain,
+            n_w_list,
+            target_error=target_error,
+            runtime_key=runtime_key,
+            use_original=use_original,
+            error_on_missing=error_on_missing,
+        )
+    elif source == "gr":
+        sweep_results = surface_code_task_resource_sweep_grouped(
+            Hchain,
+            n_w_list,
+            target_error=target_error,
+            runtime_key=runtime_key,
+            use_original=use_original,
+            error_on_missing=error_on_missing,
+        )
+    else:
+        raise ValueError(f"Unsupported source: {source}")
+
+    decompose = _surface_code_task_resource_series(
+        sweep_results,
+        n_w_list,
+        metric="total_t_depth",
+        error_on_missing=error_on_missing,
+        source=source,
+    )
+    decompose.pop("_missing", None)
+
+    if not conventional and not decompose:
+        raise FileNotFoundError(
+            "No valid T-depth data found for conventional or decompose-only series."
+        )
+
+    plt.figure(figsize=(8, 6), dpi=200)
+    ax = plt.gca()
+
+    for pf_label in n_w_list:
+        key = str(pf_label)
+        label = label_replace(key)
+        color = COLOR_MAP.get(key, None)
+
+        conventional_points = conventional.get(key)
+        if conventional_points and conventional_points["x"]:
+            x = np.asarray(conventional_points["x"], dtype=float)
+            y = np.asarray(conventional_points["y"], dtype=float)
+            order = np.argsort(x)
+            ax.plot(
+                x[order],
+                y[order],
+                marker=MARKER_MAP.get(key, "o"),
+                linestyle="-",
+                color=color,
+                label=f"{label} (conventional)",
+            )
+
+        decompose_points = decompose.get(key)
+        if decompose_points and decompose_points["x"]:
+            x = np.asarray(decompose_points["x"], dtype=float)
+            y = np.asarray(decompose_points["y"], dtype=float)
+            order = np.argsort(x)
+            ax.plot(
+                x[order],
+                y[order],
+                marker="x",
+                linestyle="--",
+                color=color,
+                label=f"{label} (decompose)",
+            )
+
+    all_x = [
+        value
+        for points in list(conventional.values()) + list(decompose.values())
+        for value in points["x"]
+    ]
+    if not all_x:
+        raise FileNotFoundError("No valid x-values found for T-depth comparison.")
+
+    set_loglog_axes(ax)
+    x_min = float(min(all_x))
+    x_max = float(max(all_x))
+    if x_max <= x_min:
+        x_min *= 0.95
+        x_max *= 1.05
+    ax.set_xlim(x_min, x_max)
+    ax.set_xlabel("Num qubits", fontsize=15)
+    ax.set_ylabel("T-depth", fontsize=15)
+    ax.grid(True, which="minor", axis="y", linestyle=":", linewidth=0.5, alpha=0.35)
+    ax.grid(True, which="major", axis="y", linestyle="-", linewidth=0.8, alpha=0.6)
+
+    handles, labels = ax.get_legend_handles_labels()
+    handles_u, labels_u = unique_legend_entries(handles, labels)
+    if handles_u:
+        ax.legend(handles_u, labels_u, loc="upper left", framealpha=0.9)
+    plt.tight_layout()
+    plt.show()
+    return {
+        "conventional": conventional,
+        "decompose": decompose,
+    }
 
 
 def t_depth_extrapolation_diff(
