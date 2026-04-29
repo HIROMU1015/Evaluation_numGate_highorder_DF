@@ -1,0 +1,5 @@
+input: step_opt_pass_00.json
+function: main
+output: step_opt_pass_01.json
+pass:
+- ir::static_condition_pruning

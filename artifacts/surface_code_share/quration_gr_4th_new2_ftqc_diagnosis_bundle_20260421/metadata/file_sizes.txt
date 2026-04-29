@@ -1,0 +1,19 @@
+[H3]
+      234868              copied  H3/step.qasm
+     1136048              copied  H3/step_ir.json
+      969727              copied  H3/step_opt_pass_00.json
+     4460541              copied  H3/step_opt_pass_02.json
+     3232197              copied  H3/step_opt.json
+        2266              copied  H3/compile_info.json
+        4239              copied  H3/opt_pass_timings.json
+    50025585  omitted_from_bundle  H3/step_sc_ls_fixed_v0.json
+
+[H4]
+     1064724              copied  H4/step.qasm
+     5261104              copied  H4/step_ir.json
+     4475943              copied  H4/step_opt_pass_00.json
+    18249753              copied  H4/step_opt_pass_02.json
+    12579309              copied  H4/step_opt.json
+        2279              copied  H4/compile_info.json
+        4201              copied  H4/opt_pass_timings.json
+   189032121  omitted_from_bundle  H4/step_sc_ls_fixed_v0.json

@@ -1,0 +1,200 @@
+{
+  "H10|2nd": {
+    "source_json": "/home/AbeHiromu/myproject/DF_project/Evaluation_numGate_highorder_DF/artifacts/df_gpu_fresh_ground_state/h10_h13_20260415_153905/H10_sto_3g_d100_2nd_df_gpu_ccsd_target_1p6em05ha.json",
+    "copied_json": "/home/AbeHiromu/myproject/DF_project/Evaluation_numGate_highorder_DF/artifacts/df_gpu_latest_results/H10_sto_3g_d100_2nd_df_gpu_ccsd_target_1p6em05ha.json",
+    "source_pkl": "/home/AbeHiromu/myproject/DF_project/Evaluation_numGate_highorder_DF/artifacts/df_gpu_fresh_ground_state/h10_h13_20260415_153905/H10_sto_3g_d100_2nd_df_gpu_ccsd_target_1p6em05ha.pkl",
+    "copied_pkl": "/home/AbeHiromu/myproject/DF_project/Evaluation_numGate_highorder_DF/artifacts/df_gpu_latest_results/H10_sto_3g_d100_2nd_df_gpu_ccsd_target_1p6em05ha.pkl"
+  },
+  "H10|4th": {
+    "source_json": "/home/AbeHiromu/myproject/DF_project/Evaluation_numGate_highorder_DF/artifacts/df_gpu_fresh_ground_state/h10_h13_20260415_153905/H10_sto_3g_d100_4th_df_gpu_ccsd_target_1p6em05ha.json",
+    "copied_json": "/home/AbeHiromu/myproject/DF_project/Evaluation_numGate_highorder_DF/artifacts/df_gpu_latest_results/H10_sto_3g_d100_4th_df_gpu_ccsd_target_1p6em05ha.json",
+    "source_pkl": "/home/AbeHiromu/myproject/DF_project/Evaluation_numGate_highorder_DF/artifacts/df_gpu_fresh_ground_state/h10_h13_20260415_153905/H10_sto_3g_d100_4th_df_gpu_ccsd_target_1p6em05ha.pkl",
+    "copied_pkl": "/home/AbeHiromu/myproject/DF_project/Evaluation_numGate_highorder_DF/artifacts/df_gpu_latest_results/H10_sto_3g_d100_4th_df_gpu_ccsd_target_1p6em05ha.pkl"
+  },
+  "H10|8th_Morales": {
+    "source_json": "/home/AbeHiromu/myproject/DF_project/Evaluation_numGate_highorder_DF/artifacts/df_gpu_fresh_ground_state/h10_h13_20260415_153905/H10_sto_3g_d100_8th_Morales_df_gpu_ccsd_target_1p6em05ha.json",
+    "copied_json": "/home/AbeHiromu/myproject/DF_project/Evaluation_numGate_highorder_DF/artifacts/df_gpu_latest_results/H10_sto_3g_d100_8th_Morales_df_gpu_ccsd_target_1p6em05ha.json",
+    "source_pkl": "/home/AbeHiromu/myproject/DF_project/Evaluation_numGate_highorder_DF/artifacts/df_gpu_fresh_ground_state/h10_h13_20260415_153905/H10_sto_3g_d100_8th_Morales_df_gpu_ccsd_target_1p6em05ha.pkl",
+    "copied_pkl": "/home/AbeHiromu/myproject/DF_project/Evaluation_numGate_highorder_DF/artifacts/df_gpu_latest_results/H10_sto_3g_d100_8th_Morales_df_gpu_ccsd_target_1p6em05ha.pkl"
+  },
+  "H11|2nd": {
+    "source_json": "/home/AbeHiromu/myproject/DF_project/Evaluation_numGate_highorder_DF/artifacts/df_gpu_fresh_ground_state/h10_h13_20260415_153905/H11_sto_3g_d100_2nd_df_gpu_ccsd_target_1p6em05ha.json",
+    "copied_json": "/home/AbeHiromu/myproject/DF_project/Evaluation_numGate_highorder_DF/artifacts/df_gpu_latest_results/H11_sto_3g_d100_2nd_df_gpu_ccsd_target_1p6em05ha.json",
+    "source_pkl": "/home/AbeHiromu/myproject/DF_project/Evaluation_numGate_highorder_DF/artifacts/df_gpu_fresh_ground_state/h10_h13_20260415_153905/H11_sto_3g_d100_2nd_df_gpu_ccsd_target_1p6em05ha.pkl",
+    "copied_pkl": "/home/AbeHiromu/myproject/DF_project/Evaluation_numGate_highorder_DF/artifacts/df_gpu_latest_results/H11_sto_3g_d100_2nd_df_gpu_ccsd_target_1p6em05ha.pkl"
+  },
+  "H11|4th": {
+    "source_json": "/home/AbeHiromu/myproject/DF_project/Evaluation_numGate_highorder_DF/artifacts/df_gpu_fresh_ground_state/h10_h13_20260415_153905/H11_sto_3g_d100_4th_df_gpu_ccsd_target_1p6em05ha.json",
+    "copied_json": "/home/AbeHiromu/myproject/DF_project/Evaluation_numGate_highorder_DF/artifacts/df_gpu_latest_results/H11_sto_3g_d100_4th_df_gpu_ccsd_target_1p6em05ha.json",
+    "source_pkl": "/home/AbeHiromu/myproject/DF_project/Evaluation_numGate_highorder_DF/artifacts/df_gpu_fresh_ground_state/h10_h13_20260415_153905/H11_sto_3g_d100_4th_df_gpu_ccsd_target_1p6em05ha.pkl",
+    "copied_pkl": "/home/AbeHiromu/myproject/DF_project/Evaluation_numGate_highorder_DF/artifacts/df_gpu_latest_results/H11_sto_3g_d100_4th_df_gpu_ccsd_target_1p6em05ha.pkl"
+  },
+  "H11|8th_Morales": {
+    "source_json": "/home/AbeHiromu/myproject/DF_project/Evaluation_numGate_highorder_DF/artifacts/df_gpu_fresh_ground_state/h10_h13_20260415_153905/H11_sto_3g_d100_8th_Morales_df_gpu_ccsd_target_1p6em05ha.json",
+    "copied_json": "/home/AbeHiromu/myproject/DF_project/Evaluation_numGate_highorder_DF/artifacts/df_gpu_latest_results/H11_sto_3g_d100_8th_Morales_df_gpu_ccsd_target_1p6em05ha.json",
+    "source_pkl": "/home/AbeHiromu/myproject/DF_project/Evaluation_numGate_highorder_DF/artifacts/df_gpu_fresh_ground_state/h10_h13_20260415_153905/H11_sto_3g_d100_8th_Morales_df_gpu_ccsd_target_1p6em05ha.pkl",
+    "copied_pkl": "/home/AbeHiromu/myproject/DF_project/Evaluation_numGate_highorder_DF/artifacts/df_gpu_latest_results/H11_sto_3g_d100_8th_Morales_df_gpu_ccsd_target_1p6em05ha.pkl"
+  },
+  "H12|2nd": {
+    "source_json": "/home/AbeHiromu/myproject/DF_project/Evaluation_numGate_highorder_DF/artifacts/df_gpu_fresh_ground_state/h10_h13_20260415_153905/H12_sto_3g_d100_2nd_df_gpu_ccsd_target_1p6em05ha.json",
+    "copied_json": "/home/AbeHiromu/myproject/DF_project/Evaluation_numGate_highorder_DF/artifacts/df_gpu_latest_results/H12_sto_3g_d100_2nd_df_gpu_ccsd_target_1p6em05ha.json",
+    "source_pkl": "/home/AbeHiromu/myproject/DF_project/Evaluation_numGate_highorder_DF/artifacts/df_gpu_fresh_ground_state/h10_h13_20260415_153905/H12_sto_3g_d100_2nd_df_gpu_ccsd_target_1p6em05ha.pkl",
+    "copied_pkl": "/home/AbeHiromu/myproject/DF_project/Evaluation_numGate_highorder_DF/artifacts/df_gpu_latest_results/H12_sto_3g_d100_2nd_df_gpu_ccsd_target_1p6em05ha.pkl"
+  },
+  "H12|4th": {
+    "source_json": "/home/AbeHiromu/myproject/DF_project/Evaluation_numGate_highorder_DF/artifacts/df_gpu_fresh_ground_state/h10_h13_20260415_153905/H12_sto_3g_d100_4th_df_gpu_ccsd_target_1p6em05ha.json",
+    "copied_json": "/home/AbeHiromu/myproject/DF_project/Evaluation_numGate_highorder_DF/artifacts/df_gpu_latest_results/H12_sto_3g_d100_4th_df_gpu_ccsd_target_1p6em05ha.json",
+    "source_pkl": "/home/AbeHiromu/myproject/DF_project/Evaluation_numGate_highorder_DF/artifacts/df_gpu_fresh_ground_state/h10_h13_20260415_153905/H12_sto_3g_d100_4th_df_gpu_ccsd_target_1p6em05ha.pkl",
+    "copied_pkl": "/home/AbeHiromu/myproject/DF_project/Evaluation_numGate_highorder_DF/artifacts/df_gpu_latest_results/H12_sto_3g_d100_4th_df_gpu_ccsd_target_1p6em05ha.pkl"
+  },
+  "H12|8th_Morales": {
+    "source_json": "/home/AbeHiromu/myproject/DF_project/Evaluation_numGate_highorder_DF/artifacts/df_gpu_fresh_ground_state/h10_h13_20260415_153905/H12_sto_3g_d100_8th_Morales_df_gpu_ccsd_target_1p6em05ha.json",
+    "copied_json": "/home/AbeHiromu/myproject/DF_project/Evaluation_numGate_highorder_DF/artifacts/df_gpu_latest_results/H12_sto_3g_d100_8th_Morales_df_gpu_ccsd_target_1p6em05ha.json",
+    "source_pkl": "/home/AbeHiromu/myproject/DF_project/Evaluation_numGate_highorder_DF/artifacts/df_gpu_fresh_ground_state/h10_h13_20260415_153905/H12_sto_3g_d100_8th_Morales_df_gpu_ccsd_target_1p6em05ha.pkl",
+    "copied_pkl": "/home/AbeHiromu/myproject/DF_project/Evaluation_numGate_highorder_DF/artifacts/df_gpu_latest_results/H12_sto_3g_d100_8th_Morales_df_gpu_ccsd_target_1p6em05ha.pkl"
+  },
+  "H13|2nd": {
+    "source_json": "/home/AbeHiromu/myproject/DF_project/Evaluation_numGate_highorder_DF/artifacts/df_gpu_fresh_ground_state/h10_h13_20260415_153905/H13_sto_3g_d100_2nd_df_gpu_ccsd_target_1p6em05ha.json",
+    "copied_json": "/home/AbeHiromu/myproject/DF_project/Evaluation_numGate_highorder_DF/artifacts/df_gpu_latest_results/H13_sto_3g_d100_2nd_df_gpu_ccsd_target_1p6em05ha.json",
+    "source_pkl": "/home/AbeHiromu/myproject/DF_project/Evaluation_numGate_highorder_DF/artifacts/df_gpu_fresh_ground_state/h10_h13_20260415_153905/H13_sto_3g_d100_2nd_df_gpu_ccsd_target_1p6em05ha.pkl",
+    "copied_pkl": "/home/AbeHiromu/myproject/DF_project/Evaluation_numGate_highorder_DF/artifacts/df_gpu_latest_results/H13_sto_3g_d100_2nd_df_gpu_ccsd_target_1p6em05ha.pkl"
+  },
+  "H13|4th": {
+    "source_json": "/home/AbeHiromu/myproject/DF_project/Evaluation_numGate_highorder_DF/artifacts/df_gpu_fresh_ground_state/h10_h13_20260415_153905/H13_sto_3g_d100_4th_df_gpu_ccsd_target_1p6em05ha.json",
+    "copied_json": "/home/AbeHiromu/myproject/DF_project/Evaluation_numGate_highorder_DF/artifacts/df_gpu_latest_results/H13_sto_3g_d100_4th_df_gpu_ccsd_target_1p6em05ha.json",
+    "source_pkl": "/home/AbeHiromu/myproject/DF_project/Evaluation_numGate_highorder_DF/artifacts/df_gpu_fresh_ground_state/h10_h13_20260415_153905/H13_sto_3g_d100_4th_df_gpu_ccsd_target_1p6em05ha.pkl",
+    "copied_pkl": "/home/AbeHiromu/myproject/DF_project/Evaluation_numGate_highorder_DF/artifacts/df_gpu_latest_results/H13_sto_3g_d100_4th_df_gpu_ccsd_target_1p6em05ha.pkl"
+  },
+  "H13|8th_Morales": {
+    "source_json": "/home/AbeHiromu/myproject/DF_project/Evaluation_numGate_highorder_DF/artifacts/df_gpu_fresh_ground_state/20260415_025545/H13_sto_3g_d100_8th_Morales_df_gpu_ccsd_target_1p6em05ha.json",
+    "copied_json": "/home/AbeHiromu/myproject/DF_project/Evaluation_numGate_highorder_DF/artifacts/df_gpu_latest_results/H13_sto_3g_d100_8th_Morales_df_gpu_ccsd_target_1p6em05ha.json",
+    "source_pkl": "/home/AbeHiromu/myproject/DF_project/Evaluation_numGate_highorder_DF/artifacts/df_gpu_fresh_ground_state/20260415_025545/H13_sto_3g_d100_8th_Morales_df_gpu_ccsd_target_1p6em05ha.pkl",
+    "copied_pkl": "/home/AbeHiromu/myproject/DF_project/Evaluation_numGate_highorder_DF/artifacts/df_gpu_latest_results/H13_sto_3g_d100_8th_Morales_df_gpu_ccsd_target_1p6em05ha.pkl"
+  },
+  "H3|2nd": {
+    "source_json": "/home/AbeHiromu/myproject/DF_project/Evaluation_numGate_highorder_DF/artifacts/df_gpu/h3_h4_refresh_20260415_191551/H3_sto_3g_d100_2nd_df_gpu_ccsd_target_1p6em05ha.json",
+    "copied_json": "/home/AbeHiromu/myproject/DF_project/Evaluation_numGate_highorder_DF/artifacts/df_gpu_latest_results/H3_sto_3g_d100_2nd_df_gpu_ccsd_target_1p6em05ha.json",
+    "source_pkl": "/home/AbeHiromu/myproject/DF_project/Evaluation_numGate_highorder_DF/artifacts/df_gpu/h3_h4_refresh_20260415_191551/H3_sto_3g_d100_2nd_df_gpu_ccsd_target_1p6em05ha.pkl",
+    "copied_pkl": "/home/AbeHiromu/myproject/DF_project/Evaluation_numGate_highorder_DF/artifacts/df_gpu_latest_results/H3_sto_3g_d100_2nd_df_gpu_ccsd_target_1p6em05ha.pkl"
+  },
+  "H3|4th": {
+    "source_json": "/home/AbeHiromu/myproject/DF_project/Evaluation_numGate_highorder_DF/artifacts/df_gpu/h3_h4_refresh_20260415_191551/H3_sto_3g_d100_4th_df_gpu_ccsd_target_1p6em05ha.json",
+    "copied_json": "/home/AbeHiromu/myproject/DF_project/Evaluation_numGate_highorder_DF/artifacts/df_gpu_latest_results/H3_sto_3g_d100_4th_df_gpu_ccsd_target_1p6em05ha.json",
+    "source_pkl": "/home/AbeHiromu/myproject/DF_project/Evaluation_numGate_highorder_DF/artifacts/df_gpu/h3_h4_refresh_20260415_191551/H3_sto_3g_d100_4th_df_gpu_ccsd_target_1p6em05ha.pkl",
+    "copied_pkl": "/home/AbeHiromu/myproject/DF_project/Evaluation_numGate_highorder_DF/artifacts/df_gpu_latest_results/H3_sto_3g_d100_4th_df_gpu_ccsd_target_1p6em05ha.pkl"
+  },
+  "H3|8th_Morales": {
+    "source_json": "/home/AbeHiromu/myproject/DF_project/Evaluation_numGate_highorder_DF/artifacts/df_gpu/h3_h4_refresh_20260415_191551/H3_sto_3g_d100_8th_Morales_df_gpu_ccsd_target_1p6em05ha.json",
+    "copied_json": "/home/AbeHiromu/myproject/DF_project/Evaluation_numGate_highorder_DF/artifacts/df_gpu_latest_results/H3_sto_3g_d100_8th_Morales_df_gpu_ccsd_target_1p6em05ha.json",
+    "source_pkl": "/home/AbeHiromu/myproject/DF_project/Evaluation_numGate_highorder_DF/artifacts/df_gpu/h3_h4_refresh_20260415_191551/H3_sto_3g_d100_8th_Morales_df_gpu_ccsd_target_1p6em05ha.pkl",
+    "copied_pkl": "/home/AbeHiromu/myproject/DF_project/Evaluation_numGate_highorder_DF/artifacts/df_gpu_latest_results/H3_sto_3g_d100_8th_Morales_df_gpu_ccsd_target_1p6em05ha.pkl"
+  },
+  "H4|2nd": {
+    "source_json": "/home/AbeHiromu/myproject/DF_project/Evaluation_numGate_highorder_DF/artifacts/df_gpu/h3_h4_refresh_20260415_191551/H4_sto_3g_d100_2nd_df_gpu_ccsd_target_1p6em05ha.json",
+    "copied_json": "/home/AbeHiromu/myproject/DF_project/Evaluation_numGate_highorder_DF/artifacts/df_gpu_latest_results/H4_sto_3g_d100_2nd_df_gpu_ccsd_target_1p6em05ha.json",
+    "source_pkl": "/home/AbeHiromu/myproject/DF_project/Evaluation_numGate_highorder_DF/artifacts/df_gpu/h3_h4_refresh_20260415_191551/H4_sto_3g_d100_2nd_df_gpu_ccsd_target_1p6em05ha.pkl",
+    "copied_pkl": "/home/AbeHiromu/myproject/DF_project/Evaluation_numGate_highorder_DF/artifacts/df_gpu_latest_results/H4_sto_3g_d100_2nd_df_gpu_ccsd_target_1p6em05ha.pkl"
+  },
+  "H4|4th": {
+    "source_json": "/home/AbeHiromu/myproject/DF_project/Evaluation_numGate_highorder_DF/artifacts/df_gpu/h3_h4_refresh_20260415_191551/H4_sto_3g_d100_4th_df_gpu_ccsd_target_1p6em05ha.json",
+    "copied_json": "/home/AbeHiromu/myproject/DF_project/Evaluation_numGate_highorder_DF/artifacts/df_gpu_latest_results/H4_sto_3g_d100_4th_df_gpu_ccsd_target_1p6em05ha.json",
+    "source_pkl": "/home/AbeHiromu/myproject/DF_project/Evaluation_numGate_highorder_DF/artifacts/df_gpu/h3_h4_refresh_20260415_191551/H4_sto_3g_d100_4th_df_gpu_ccsd_target_1p6em05ha.pkl",
+    "copied_pkl": "/home/AbeHiromu/myproject/DF_project/Evaluation_numGate_highorder_DF/artifacts/df_gpu_latest_results/H4_sto_3g_d100_4th_df_gpu_ccsd_target_1p6em05ha.pkl"
+  },
+  "H4|8th_Morales": {
+    "source_json": "/home/AbeHiromu/myproject/DF_project/Evaluation_numGate_highorder_DF/artifacts/df_gpu/h3_h4_refresh_20260415_191551/H4_sto_3g_d100_8th_Morales_df_gpu_ccsd_target_1p6em05ha.json",
+    "copied_json": "/home/AbeHiromu/myproject/DF_project/Evaluation_numGate_highorder_DF/artifacts/df_gpu_latest_results/H4_sto_3g_d100_8th_Morales_df_gpu_ccsd_target_1p6em05ha.json",
+    "source_pkl": "/home/AbeHiromu/myproject/DF_project/Evaluation_numGate_highorder_DF/artifacts/df_gpu/h3_h4_refresh_20260415_191551/H4_sto_3g_d100_8th_Morales_df_gpu_ccsd_target_1p6em05ha.pkl",
+    "copied_pkl": "/home/AbeHiromu/myproject/DF_project/Evaluation_numGate_highorder_DF/artifacts/df_gpu_latest_results/H4_sto_3g_d100_8th_Morales_df_gpu_ccsd_target_1p6em05ha.pkl"
+  },
+  "H5|2nd": {
+    "source_json": "/home/AbeHiromu/myproject/DF_project/Evaluation_numGate_highorder_DF/artifacts/df_gpu/verify_gpu_rz_layers_h5_2nd/H5_sto_3g_d100_2nd_df_gpu_ccsd_target_1p6em05ha.json",
+    "copied_json": "/home/AbeHiromu/myproject/DF_project/Evaluation_numGate_highorder_DF/artifacts/df_gpu_latest_results/H5_sto_3g_d100_2nd_df_gpu_ccsd_target_1p6em05ha.json",
+    "source_pkl": "/home/AbeHiromu/myproject/DF_project/Evaluation_numGate_highorder_DF/artifacts/df_gpu/verify_gpu_rz_layers_h5_2nd/H5_sto_3g_d100_2nd_df_gpu_ccsd_target_1p6em05ha.pkl",
+    "copied_pkl": "/home/AbeHiromu/myproject/DF_project/Evaluation_numGate_highorder_DF/artifacts/df_gpu_latest_results/H5_sto_3g_d100_2nd_df_gpu_ccsd_target_1p6em05ha.pkl"
+  },
+  "H5|4th": {
+    "source_json": "/home/AbeHiromu/myproject/DF_project/Evaluation_numGate_highorder_DF/artifacts/df_gpu/verify_actual_gpu_postfix_h5_4th/H5_sto_3g_d100_4th_df_gpu_ccsd_target_1p6em05ha.json",
+    "copied_json": "/home/AbeHiromu/myproject/DF_project/Evaluation_numGate_highorder_DF/artifacts/df_gpu_latest_results/H5_sto_3g_d100_4th_df_gpu_ccsd_target_1p6em05ha.json",
+    "source_pkl": "/home/AbeHiromu/myproject/DF_project/Evaluation_numGate_highorder_DF/artifacts/df_gpu/verify_actual_gpu_postfix_h5_4th/H5_sto_3g_d100_4th_df_gpu_ccsd_target_1p6em05ha.pkl",
+    "copied_pkl": "/home/AbeHiromu/myproject/DF_project/Evaluation_numGate_highorder_DF/artifacts/df_gpu_latest_results/H5_sto_3g_d100_4th_df_gpu_ccsd_target_1p6em05ha.pkl"
+  },
+  "H5|8th_Morales": {
+    "source_json": "/home/AbeHiromu/myproject/DF_project/Evaluation_numGate_highorder_DF/artifacts/df_gpu/verify_actual_gpu_postfix_h5_8th/H5_sto_3g_d100_8th_Morales_df_gpu_ccsd_target_1p6em05ha.json",
+    "copied_json": "/home/AbeHiromu/myproject/DF_project/Evaluation_numGate_highorder_DF/artifacts/df_gpu_latest_results/H5_sto_3g_d100_8th_Morales_df_gpu_ccsd_target_1p6em05ha.json",
+    "source_pkl": "/home/AbeHiromu/myproject/DF_project/Evaluation_numGate_highorder_DF/artifacts/df_gpu/verify_actual_gpu_postfix_h5_8th/H5_sto_3g_d100_8th_Morales_df_gpu_ccsd_target_1p6em05ha.pkl",
+    "copied_pkl": "/home/AbeHiromu/myproject/DF_project/Evaluation_numGate_highorder_DF/artifacts/df_gpu_latest_results/H5_sto_3g_d100_8th_Morales_df_gpu_ccsd_target_1p6em05ha.pkl"
+  },
+  "H6|2nd": {
+    "source_json": "/home/AbeHiromu/myproject/DF_project/Evaluation_numGate_highorder_DF/artifacts/df_gpu/verify_actual_gpu_postfix_h6_2nd/H6_sto_3g_d100_2nd_df_gpu_ccsd_target_1p6em05ha.json",
+    "copied_json": "/home/AbeHiromu/myproject/DF_project/Evaluation_numGate_highorder_DF/artifacts/df_gpu_latest_results/H6_sto_3g_d100_2nd_df_gpu_ccsd_target_1p6em05ha.json",
+    "source_pkl": "/home/AbeHiromu/myproject/DF_project/Evaluation_numGate_highorder_DF/artifacts/df_gpu/verify_actual_gpu_postfix_h6_2nd/H6_sto_3g_d100_2nd_df_gpu_ccsd_target_1p6em05ha.pkl",
+    "copied_pkl": "/home/AbeHiromu/myproject/DF_project/Evaluation_numGate_highorder_DF/artifacts/df_gpu_latest_results/H6_sto_3g_d100_2nd_df_gpu_ccsd_target_1p6em05ha.pkl"
+  },
+  "H6|4th": {
+    "source_json": "/home/AbeHiromu/myproject/DF_project/Evaluation_numGate_highorder_DF/artifacts/df_gpu/verify_actual_gpu_postfix_h6_4th/H6_sto_3g_d100_4th_df_gpu_ccsd_target_1p6em05ha.json",
+    "copied_json": "/home/AbeHiromu/myproject/DF_project/Evaluation_numGate_highorder_DF/artifacts/df_gpu_latest_results/H6_sto_3g_d100_4th_df_gpu_ccsd_target_1p6em05ha.json",
+    "source_pkl": "/home/AbeHiromu/myproject/DF_project/Evaluation_numGate_highorder_DF/artifacts/df_gpu/verify_actual_gpu_postfix_h6_4th/H6_sto_3g_d100_4th_df_gpu_ccsd_target_1p6em05ha.pkl",
+    "copied_pkl": "/home/AbeHiromu/myproject/DF_project/Evaluation_numGate_highorder_DF/artifacts/df_gpu_latest_results/H6_sto_3g_d100_4th_df_gpu_ccsd_target_1p6em05ha.pkl"
+  },
+  "H6|8th_Morales": {
+    "source_json": "/home/AbeHiromu/myproject/DF_project/Evaluation_numGate_highorder_DF/artifacts/df_gpu/verify_actual_gpu_postfix_h6_8th/H6_sto_3g_d100_8th_Morales_df_gpu_ccsd_target_1p6em05ha.json",
+    "copied_json": "/home/AbeHiromu/myproject/DF_project/Evaluation_numGate_highorder_DF/artifacts/df_gpu_latest_results/H6_sto_3g_d100_8th_Morales_df_gpu_ccsd_target_1p6em05ha.json",
+    "source_pkl": "/home/AbeHiromu/myproject/DF_project/Evaluation_numGate_highorder_DF/artifacts/df_gpu/verify_actual_gpu_postfix_h6_8th/H6_sto_3g_d100_8th_Morales_df_gpu_ccsd_target_1p6em05ha.pkl",
+    "copied_pkl": "/home/AbeHiromu/myproject/DF_project/Evaluation_numGate_highorder_DF/artifacts/df_gpu_latest_results/H6_sto_3g_d100_8th_Morales_df_gpu_ccsd_target_1p6em05ha.pkl"
+  },
+  "H7|2nd": {
+    "source_json": "/home/AbeHiromu/myproject/DF_project/Evaluation_numGate_highorder_DF/artifacts/df_gpu/verify_actual_gpu_postfix_h7_2nd/H7_sto_3g_d100_2nd_df_gpu_ccsd_target_1p6em05ha.json",
+    "copied_json": "/home/AbeHiromu/myproject/DF_project/Evaluation_numGate_highorder_DF/artifacts/df_gpu_latest_results/H7_sto_3g_d100_2nd_df_gpu_ccsd_target_1p6em05ha.json",
+    "source_pkl": "/home/AbeHiromu/myproject/DF_project/Evaluation_numGate_highorder_DF/artifacts/df_gpu/verify_actual_gpu_postfix_h7_2nd/H7_sto_3g_d100_2nd_df_gpu_ccsd_target_1p6em05ha.pkl",
+    "copied_pkl": "/home/AbeHiromu/myproject/DF_project/Evaluation_numGate_highorder_DF/artifacts/df_gpu_latest_results/H7_sto_3g_d100_2nd_df_gpu_ccsd_target_1p6em05ha.pkl"
+  },
+  "H7|4th": {
+    "source_json": "/home/AbeHiromu/myproject/DF_project/Evaluation_numGate_highorder_DF/artifacts/df_gpu/verify_actual_gpu_postfix_h7_4th/H7_sto_3g_d100_4th_df_gpu_ccsd_target_1p6em05ha.json",
+    "copied_json": "/home/AbeHiromu/myproject/DF_project/Evaluation_numGate_highorder_DF/artifacts/df_gpu_latest_results/H7_sto_3g_d100_4th_df_gpu_ccsd_target_1p6em05ha.json",
+    "source_pkl": "/home/AbeHiromu/myproject/DF_project/Evaluation_numGate_highorder_DF/artifacts/df_gpu/verify_actual_gpu_postfix_h7_4th/H7_sto_3g_d100_4th_df_gpu_ccsd_target_1p6em05ha.pkl",
+    "copied_pkl": "/home/AbeHiromu/myproject/DF_project/Evaluation_numGate_highorder_DF/artifacts/df_gpu_latest_results/H7_sto_3g_d100_4th_df_gpu_ccsd_target_1p6em05ha.pkl"
+  },
+  "H7|8th_Morales": {
+    "source_json": "/home/AbeHiromu/myproject/DF_project/Evaluation_numGate_highorder_DF/artifacts/df_gpu/verify_actual_gpu_postfix_h7_8th/H7_sto_3g_d100_8th_Morales_df_gpu_ccsd_target_1p6em05ha.json",
+    "copied_json": "/home/AbeHiromu/myproject/DF_project/Evaluation_numGate_highorder_DF/artifacts/df_gpu_latest_results/H7_sto_3g_d100_8th_Morales_df_gpu_ccsd_target_1p6em05ha.json",
+    "source_pkl": "/home/AbeHiromu/myproject/DF_project/Evaluation_numGate_highorder_DF/artifacts/df_gpu/verify_actual_gpu_postfix_h7_8th/H7_sto_3g_d100_8th_Morales_df_gpu_ccsd_target_1p6em05ha.pkl",
+    "copied_pkl": "/home/AbeHiromu/myproject/DF_project/Evaluation_numGate_highorder_DF/artifacts/df_gpu_latest_results/H7_sto_3g_d100_8th_Morales_df_gpu_ccsd_target_1p6em05ha.pkl"
+  },
+  "H8|2nd": {
+    "source_json": "/home/AbeHiromu/myproject/DF_project/Evaluation_numGate_highorder_DF/artifacts/df_gpu/verify_actual_gpu_postfix_h8_2nd/H8_sto_3g_d100_2nd_df_gpu_ccsd_target_1p6em05ha.json",
+    "copied_json": "/home/AbeHiromu/myproject/DF_project/Evaluation_numGate_highorder_DF/artifacts/df_gpu_latest_results/H8_sto_3g_d100_2nd_df_gpu_ccsd_target_1p6em05ha.json",
+    "source_pkl": "/home/AbeHiromu/myproject/DF_project/Evaluation_numGate_highorder_DF/artifacts/df_gpu/verify_actual_gpu_postfix_h8_2nd/H8_sto_3g_d100_2nd_df_gpu_ccsd_target_1p6em05ha.pkl",
+    "copied_pkl": "/home/AbeHiromu/myproject/DF_project/Evaluation_numGate_highorder_DF/artifacts/df_gpu_latest_results/H8_sto_3g_d100_2nd_df_gpu_ccsd_target_1p6em05ha.pkl"
+  },
+  "H8|4th": {
+    "source_json": "/home/AbeHiromu/myproject/DF_project/Evaluation_numGate_highorder_DF/artifacts/df_gpu/verify_actual_gpu_postfix_h8_4th/H8_sto_3g_d100_4th_df_gpu_ccsd_target_1p6em05ha.json",
+    "copied_json": "/home/AbeHiromu/myproject/DF_project/Evaluation_numGate_highorder_DF/artifacts/df_gpu_latest_results/H8_sto_3g_d100_4th_df_gpu_ccsd_target_1p6em05ha.json",
+    "source_pkl": "/home/AbeHiromu/myproject/DF_project/Evaluation_numGate_highorder_DF/artifacts/df_gpu/verify_actual_gpu_postfix_h8_4th/H8_sto_3g_d100_4th_df_gpu_ccsd_target_1p6em05ha.pkl",
+    "copied_pkl": "/home/AbeHiromu/myproject/DF_project/Evaluation_numGate_highorder_DF/artifacts/df_gpu_latest_results/H8_sto_3g_d100_4th_df_gpu_ccsd_target_1p6em05ha.pkl"
+  },
+  "H8|8th_Morales": {
+    "source_json": "/home/AbeHiromu/myproject/DF_project/Evaluation_numGate_highorder_DF/artifacts/df_gpu/verify_actual_gpu_postfix_h8_8th/H8_sto_3g_d100_8th_Morales_df_gpu_ccsd_target_1p6em05ha.json",
+    "copied_json": "/home/AbeHiromu/myproject/DF_project/Evaluation_numGate_highorder_DF/artifacts/df_gpu_latest_results/H8_sto_3g_d100_8th_Morales_df_gpu_ccsd_target_1p6em05ha.json",
+    "source_pkl": "/home/AbeHiromu/myproject/DF_project/Evaluation_numGate_highorder_DF/artifacts/df_gpu/verify_actual_gpu_postfix_h8_8th/H8_sto_3g_d100_8th_Morales_df_gpu_ccsd_target_1p6em05ha.pkl",
+    "copied_pkl": "/home/AbeHiromu/myproject/DF_project/Evaluation_numGate_highorder_DF/artifacts/df_gpu_latest_results/H8_sto_3g_d100_8th_Morales_df_gpu_ccsd_target_1p6em05ha.pkl"
+  },
+  "H9|2nd": {
+    "source_json": "/home/AbeHiromu/myproject/DF_project/Evaluation_numGate_highorder_DF/artifacts/df_gpu_fresh_ground_state/h9_20260415_151447/H9_sto_3g_d100_2nd_df_gpu_ccsd_target_1p6em05ha.json",
+    "copied_json": "/home/AbeHiromu/myproject/DF_project/Evaluation_numGate_highorder_DF/artifacts/df_gpu_latest_results/H9_sto_3g_d100_2nd_df_gpu_ccsd_target_1p6em05ha.json",
+    "source_pkl": "/home/AbeHiromu/myproject/DF_project/Evaluation_numGate_highorder_DF/artifacts/df_gpu_fresh_ground_state/h9_20260415_151447/H9_sto_3g_d100_2nd_df_gpu_ccsd_target_1p6em05ha.pkl",
+    "copied_pkl": "/home/AbeHiromu/myproject/DF_project/Evaluation_numGate_highorder_DF/artifacts/df_gpu_latest_results/H9_sto_3g_d100_2nd_df_gpu_ccsd_target_1p6em05ha.pkl"
+  },
+  "H9|4th": {
+    "source_json": "/home/AbeHiromu/myproject/DF_project/Evaluation_numGate_highorder_DF/artifacts/df_gpu_fresh_ground_state/h9_20260415_151447/H9_sto_3g_d100_4th_df_gpu_ccsd_target_1p6em05ha.json",
+    "copied_json": "/home/AbeHiromu/myproject/DF_project/Evaluation_numGate_highorder_DF/artifacts/df_gpu_latest_results/H9_sto_3g_d100_4th_df_gpu_ccsd_target_1p6em05ha.json",
+    "source_pkl": "/home/AbeHiromu/myproject/DF_project/Evaluation_numGate_highorder_DF/artifacts/df_gpu_fresh_ground_state/h9_20260415_151447/H9_sto_3g_d100_4th_df_gpu_ccsd_target_1p6em05ha.pkl",
+    "copied_pkl": "/home/AbeHiromu/myproject/DF_project/Evaluation_numGate_highorder_DF/artifacts/df_gpu_latest_results/H9_sto_3g_d100_4th_df_gpu_ccsd_target_1p6em05ha.pkl"
+  },
+  "H9|8th_Morales": {
+    "source_json": "/home/AbeHiromu/myproject/DF_project/Evaluation_numGate_highorder_DF/artifacts/df_gpu_fresh_ground_state/h9_20260415_151447/H9_sto_3g_d100_8th_Morales_df_gpu_ccsd_target_1p6em05ha.json",
+    "copied_json": "/home/AbeHiromu/myproject/DF_project/Evaluation_numGate_highorder_DF/artifacts/df_gpu_latest_results/H9_sto_3g_d100_8th_Morales_df_gpu_ccsd_target_1p6em05ha.json",
+    "source_pkl": "/home/AbeHiromu/myproject/DF_project/Evaluation_numGate_highorder_DF/artifacts/df_gpu_fresh_ground_state/h9_20260415_151447/H9_sto_3g_d100_8th_Morales_df_gpu_ccsd_target_1p6em05ha.pkl",
+    "copied_pkl": "/home/AbeHiromu/myproject/DF_project/Evaluation_numGate_highorder_DF/artifacts/df_gpu_latest_results/H9_sto_3g_d100_8th_Morales_df_gpu_ccsd_target_1p6em05ha.pkl"
+  }
+}

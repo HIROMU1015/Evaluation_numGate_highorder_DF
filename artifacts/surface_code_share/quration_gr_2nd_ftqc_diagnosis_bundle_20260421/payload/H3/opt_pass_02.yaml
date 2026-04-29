@@ -1,0 +1,5 @@
+input: step_opt_pass_01.json
+function: main
+output: step_opt_pass_02.json
+pass:
+- ir::decompose_inst

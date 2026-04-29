@@ -1,0 +1,12 @@
+python: 3.11.0rc1 (main, Aug 12 2022, 10:02:14) [GCC 11.2.0]
+platform: Linux-6.8.0-47-generic-x86_64-with-glibc2.35
+uname: uname_result(system='Linux', node='abe-Precision-3260', release='6.8.0-47-generic', version='#47~22.04.1-Ubuntu SMP PREEMPT_DYNAMIC Wed Oct  2 16:16:55 UTC 2', machine='x86_64')
+nproc: 32
+
+free -h:
+               total        used        free      shared  buff/cache   available
+Mem:            62Gi        50Gi       753Mi       1.2Gi        11Gi        10Gi
+Swap:          2.0Gi       2.0Gi       0.0Ki
+
+qcsf --help:
+qcsf --help unavailable: Command '['/home/abe/Project/Evaluation_numGate_DF/surface_code/demo_linux_macos/demo_linux_local/bin/qcsf', '--help']' returned non-zero exit status 127.

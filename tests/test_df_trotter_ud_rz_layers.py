@@ -220,6 +220,7 @@ def test_df_trotter_ud_rz_layer_counts_uses_config_time_when_none(monkeypatch) -
         return {"rz_total_ud": {"total_rz_depth": 1}}
 
     monkeypatch.setattr(df_plot, "_compute_df_rz_costs", _fake_compute_df_rz_costs)
+    monkeypatch.setattr(df_plot, "_default_df_time_or_raise", lambda **kwargs: 0.37)
 
     _ = df_plot.df_trotter_ud_rz_layer_counts(
         molecule_type=4,
@@ -247,6 +248,7 @@ def test_df_trotter_energy_error_plot_uses_config_time_defaults(monkeypatch) -> 
         return [float(t_start)], [1.0e-3], {}
 
     monkeypatch.setattr(df_plot, "df_trotter_energy_error_curve", _fake_curve)
+    monkeypatch.setattr(df_plot, "_default_df_time_or_raise", lambda **kwargs: 1.12)
     monkeypatch.setattr(df_plot.plt, "show", lambda: None)
 
     _ = df_plot.df_trotter_energy_error_plot(
@@ -382,6 +384,116 @@ def test_df_trotter_ud_rz_layer_counts_can_save_artifact(
     assert saved["num_qubits"] == 2
 
 
+def test_plot_df_u_rz_depth_vs_num_qubits_reads_latest_results_first(
+    monkeypatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(df_plot, "PICKLE_DIR_DF_RZ_LAYER_PATH", tmp_path)
+    monkeypatch.setattr(
+        df_plot,
+        "_artifact_ham_name",
+        lambda molecule_type, *, distance, basis: f"H{int(molecule_type)}_mock",
+    )
+
+    import trotterlib.cost_extrapolation as ce
+
+    latest = {
+        "H2_mock": {
+            "num_qubits": 4,
+            "u_rz_depth": 101,
+            "d_rz_depth": 81,
+            "total_rz_depth": 202,
+            "u_nonclifford_rz_depth": 11,
+            "d_nonclifford_rz_depth": 9,
+            "total_nonclifford_rz_depth": 22,
+            "u_nonclifford_z_coloring_depth": 12,
+            "d_nonclifford_z_coloring_depth": 10,
+            "total_nonclifford_z_coloring_depth": 24,
+        },
+        "H3_mock": {
+            "num_qubits": 6,
+            "u_rz_depth": 303,
+            "d_rz_depth": 243,
+            "total_rz_depth": 606,
+            "u_nonclifford_rz_depth": 33,
+            "d_nonclifford_rz_depth": 27,
+            "total_nonclifford_rz_depth": 66,
+            "u_nonclifford_z_coloring_depth": 36,
+            "d_nonclifford_z_coloring_depth": 30,
+            "total_nonclifford_z_coloring_depth": 72,
+        },
+    }
+
+    monkeypatch.setattr(ce, "_load_df_gpu_latest_payload", lambda ham_name, pf_label: {"rz_layers": latest[ham_name], "info": {"num_qubits": latest[ham_name]["num_qubits"]}})
+    monkeypatch.setattr(ce, "_compute_df_gpu_latest_rz_layers_from_hamiltonian", lambda ham_name, pf_label, payload=None: dict(latest[ham_name]))
+
+    with (tmp_path / "H2_mock_Operator_2nd").open("wb") as f:
+        pickle.dump({"num_qubits": 4, "u_rz_depth": 1, "d_rz_depth": 2, "total_rz_depth": 3}, f)
+    with (tmp_path / "H3_mock_Operator_2nd").open("wb") as f:
+        pickle.dump({"num_qubits": 6, "u_rz_depth": 4, "d_rz_depth": 5, "total_rz_depth": 6}, f)
+
+    out = df_plot.plot_df_u_rz_depth_vs_num_qubits(
+        molecule_types=[3, 2],
+        pf_label="2nd",
+        show=False,
+        include_pf_rz_layer=False,
+    )
+    assert out["num_qubits"] == [4.0, 6.0]
+    assert out["u_rz_depth"] == [101.0, 303.0]
+    assert out["d_rz_depth"] == [81.0, 243.0]
+    assert out["total_rz_depth"] == [202.0, 606.0]
+
+
+def test_plot_df_u_rz_depth_vs_num_qubits_reads_latest_results_nonclifford_modes(
+    monkeypatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(df_plot, "PICKLE_DIR_DF_RZ_LAYER_PATH", tmp_path)
+    monkeypatch.setattr(
+        df_plot,
+        "_artifact_ham_name",
+        lambda molecule_type, *, distance, basis: f"H{int(molecule_type)}_mock",
+    )
+
+    import trotterlib.cost_extrapolation as ce
+
+    latest = {
+        "num_qubits": 4,
+        "u_rz_depth": 1,
+        "d_rz_depth": 1,
+        "total_rz_depth": 2,
+        "u_nonclifford_rz_depth": 7,
+        "d_nonclifford_rz_depth": 5,
+        "total_nonclifford_rz_depth": 12,
+        "u_nonclifford_z_coloring_depth": 8,
+        "d_nonclifford_z_coloring_depth": 6,
+        "total_nonclifford_z_coloring_depth": 14,
+    }
+
+    monkeypatch.setattr(ce, "_load_df_gpu_latest_payload", lambda ham_name, pf_label: {"rz_layers": latest, "info": {"num_qubits": latest["num_qubits"]}})
+    monkeypatch.setattr(ce, "_compute_df_gpu_latest_rz_layers_from_hamiltonian", lambda ham_name, pf_label, payload=None: dict(latest))
+
+    out_nc = df_plot.plot_df_u_rz_depth_vs_num_qubits(
+        molecule_types=[2],
+        pf_label="2nd",
+        show=False,
+        include_pf_rz_layer=False,
+        use_nonclifford_rz_depth=True,
+    )
+    assert out_nc["u_rz_depth"] == [7.0]
+    assert out_nc["d_rz_depth"] == [5.0]
+    assert out_nc["total_rz_depth"] == [12.0]
+
+    out_color = df_plot.plot_df_u_rz_depth_vs_num_qubits(
+        molecule_types=[2],
+        pf_label="2nd",
+        show=False,
+        include_pf_rz_layer=False,
+        use_nonclifford_z_coloring_depth=True,
+    )
+    assert out_color["u_rz_depth"] == [8.0]
+    assert out_color["d_rz_depth"] == [6.0]
+    assert out_color["total_rz_depth"] == [14.0]
+
+
 def test_plot_df_u_rz_depth_vs_num_qubits_reads_saved_layers(
     monkeypatch, tmp_path: Path
 ) -> None:
@@ -391,6 +503,7 @@ def test_plot_df_u_rz_depth_vs_num_qubits_reads_saved_layers(
         "_artifact_ham_name",
         lambda molecule_type, *, distance, basis: f"H{int(molecule_type)}_mock",
     )
+    monkeypatch.setattr(df_plot, "_load_df_latest_rz_layer_metrics", lambda **kwargs: None)
 
     data_h2 = {
         "num_qubits": 4,
@@ -437,6 +550,7 @@ def test_plot_df_u_rz_depth_vs_num_qubits_nonclifford_mode(
         "_artifact_ham_name",
         lambda molecule_type, *, distance, basis: f"H{int(molecule_type)}_mock",
     )
+    monkeypatch.setattr(df_plot, "_load_df_latest_rz_layer_metrics", lambda **kwargs: None)
 
     data_h2 = {
         "num_qubits": 4,
@@ -483,6 +597,7 @@ def test_plot_df_u_rz_depth_vs_num_qubits_nonclifford_coloring_mode(
         "_artifact_ham_name",
         lambda molecule_type, *, distance, basis: f"H{int(molecule_type)}_mock",
     )
+    monkeypatch.setattr(df_plot, "_load_df_latest_rz_layer_metrics", lambda **kwargs: None)
 
     data_h2 = {
         "num_qubits": 4,

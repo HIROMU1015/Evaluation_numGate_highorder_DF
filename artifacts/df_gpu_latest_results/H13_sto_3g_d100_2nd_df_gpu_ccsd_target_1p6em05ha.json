@@ -1,0 +1,648 @@
+{
+  "times": [
+    0.12,
+    0.123,
+    0.129
+  ],
+  "errors": [
+    0.0006953760906453604,
+    0.000730708599031617,
+    0.0008040464373883622
+  ],
+  "info": {
+    "num_qubits": 26,
+    "energy_ref": -18.320232886224147,
+    "energy_shift": 14.997802299664952,
+    "rank": 25,
+    "rank_fraction": 0.14792899408284024,
+    "tol": null,
+    "gpu_ids": [
+      "4",
+      "5",
+      "6",
+      "7"
+    ],
+    "requested_gpu_ids": [
+      "4",
+      "5",
+      "6",
+      "7"
+    ],
+    "gpu_groups": [
+      [
+        "4"
+      ],
+      [
+        "5"
+      ],
+      [
+        "6"
+      ]
+    ],
+    "prefer_low_memory_gpus": true,
+    "gpu_memory_snapshot": [
+      {
+        "index": "0",
+        "memory_used_mb": 683,
+        "memory_total_mb": 40960
+      },
+      {
+        "index": "1",
+        "memory_used_mb": 683,
+        "memory_total_mb": 40960
+      },
+      {
+        "index": "2",
+        "memory_used_mb": 683,
+        "memory_total_mb": 40960
+      },
+      {
+        "index": "3",
+        "memory_used_mb": 683,
+        "memory_total_mb": 40960
+      },
+      {
+        "index": "4",
+        "memory_used_mb": 1,
+        "memory_total_mb": 40960
+      },
+      {
+        "index": "5",
+        "memory_used_mb": 1,
+        "memory_total_mb": 40960
+      },
+      {
+        "index": "6",
+        "memory_used_mb": 1,
+        "memory_total_mb": 40960
+      },
+      {
+        "index": "7",
+        "memory_used_mb": 1,
+        "memory_total_mb": 40960
+      }
+    ],
+    "chunk_splits": 1,
+    "optimization_level": 0,
+    "parallel_times": true,
+    "processes": 3,
+    "t_start": 0.12,
+    "t_end": 0.13,
+    "t_step": 0.003,
+    "num_time_points": 3,
+    "time_point_limit": 3,
+    "parameterized_template": {
+      "enabled": false
+    },
+    "ground_state_info": {
+      "nelec_alpha": 7,
+      "nelec_beta": 5,
+      "n_electrons": 12,
+      "sz_value": 1.0,
+      "sector_dim": 2208492,
+      "full_dim": 67108864,
+      "restricted_dim": 2208492,
+      "restricted_nnz": null,
+      "hf_guess_index": 67084288,
+      "matrix_free": true,
+      "matrix_free_real_dtype": true,
+      "alpha_sector_dim": 1716,
+      "beta_sector_dim": 1287,
+      "solver": "eigsh",
+      "solver_tol": 1e-10,
+      "molecule_type": 13,
+      "num_qubits": 26,
+      "rank": 25,
+      "rank_fraction": 0.14792899408284024,
+      "hamiltonian_fingerprint": "aeef9d09195dd8de6034097794e29193ce6539f3dd61e1b28cf772a0577c022f",
+      "artifact_name": "H13_sto-3g_triplet_1+_distance_100_charge_1_grouping_df_sector_ground_state_rank_25_rankfrac_0p147928994083_ccsd_target_1p6em05ha",
+      "loaded_from_artifact": false,
+      "rank_source": "config",
+      "tol": null
+    },
+    "mean_build_circuit_s": 0.4987855546642095,
+    "mean_simulate_s": 750.6119731893608,
+    "simulate_profile_per_time": [
+      {
+        "mode": "single",
+        "num_qubits": 26,
+        "input_num_instructions": 51483,
+        "optimization_level": 0,
+        "gpu_ids": [
+          "4"
+        ],
+        "execution_strategy": "baseline",
+        "aer_simulator_kwargs": {
+          "method": "statevector",
+          "device": "GPU",
+          "fusion_enable": false
+        },
+        "set_cuda_visible_devices_s": 9.315903298556805e-05,
+        "init_statevector_s": 0.0004902381915599108,
+        "simulator_cache_hit": false,
+        "create_simulator_s": 0.0015434219967573881,
+        "set_statevector_instruction_s": 0.2361433559563011,
+        "compose_circuit_s": 0.07992028607986867,
+        "append_save_statevector_s": 0.0009873039089143276,
+        "full_num_instructions": 51485,
+        "pretranspile_global_phase": 1.686623562770749,
+        "transpile_s": 12.189416083041579,
+        "transpiled_num_instructions": 503001,
+        "global_phase": 5.643110721991436,
+        "simulator_run_result_s": 738.0363716839347,
+        "extract_statevector_s": 0.0003128889948129654,
+        "apply_global_phase_s": 0.2006488088518381,
+        "backend": "aer_statevector_gpu",
+        "total_s": 750.7461312378291,
+        "time": 0.12,
+        "build_num_instructions": 51483
+      },
+      {
+        "mode": "single",
+        "num_qubits": 26,
+        "input_num_instructions": 51483,
+        "optimization_level": 0,
+        "gpu_ids": [
+          "5"
+        ],
+        "execution_strategy": "baseline",
+        "aer_simulator_kwargs": {
+          "method": "statevector",
+          "device": "GPU",
+          "fusion_enable": false
+        },
+        "set_cuda_visible_devices_s": 6.460887379944324e-05,
+        "init_statevector_s": 0.00023404904641211033,
+        "simulator_cache_hit": false,
+        "create_simulator_s": 0.0006858368869870901,
+        "set_statevector_instruction_s": 0.24320488004013896,
+        "compose_circuit_s": 0.08559691603295505,
+        "append_save_statevector_s": 0.0007877761963754892,
+        "full_num_instructions": 51485,
+        "pretranspile_global_phase": 1.7287891518400116,
+        "transpile_s": 11.6527127570007,
+        "transpiled_num_instructions": 503001,
+        "global_phase": 5.627108857361719,
+        "simulator_run_result_s": 738.057115084026,
+        "extract_statevector_s": 0.00021632900461554527,
+        "apply_global_phase_s": 0.17708566901274025,
+        "backend": "aer_statevector_gpu",
+        "total_s": 750.2178631441202,
+        "time": 0.123,
+        "build_num_instructions": 51483
+      },
+      {
+        "mode": "single",
+        "num_qubits": 26,
+        "input_num_instructions": 51483,
+        "optimization_level": 0,
+        "gpu_ids": [
+          "6"
+        ],
+        "execution_strategy": "baseline",
+        "aer_simulator_kwargs": {
+          "method": "statevector",
+          "device": "GPU",
+          "fusion_enable": false
+        },
+        "set_cuda_visible_devices_s": 7.197889499366283e-05,
+        "init_statevector_s": 0.00023189885541796684,
+        "simulator_cache_hit": false,
+        "create_simulator_s": 0.0007391059771180153,
+        "set_statevector_instruction_s": 0.23374442919157445,
+        "compose_circuit_s": 0.11227842792868614,
+        "append_save_statevector_s": 0.0007312360685318708,
+        "full_num_instructions": 51485,
+        "pretranspile_global_phase": 1.8131203299785525,
+        "transpile_s": 11.695123676909134,
+        "transpiled_num_instructions": 503001,
+        "global_phase": 5.595105128102324,
+        "simulator_run_result_s": 738.4585973080248,
+        "extract_statevector_s": 0.00023073889315128326,
+        "apply_global_phase_s": 0.23238535900600255,
+        "backend": "aer_statevector_gpu",
+        "total_s": 750.7342840698548,
+        "time": 0.129,
+        "build_num_instructions": 51483
+      }
+    ],
+    "mean_simulate_profile_s": {
+      "append_save_statevector_s": 0.0008354387246072292,
+      "apply_global_phase_s": 0.2033732789568603,
+      "compose_circuit_s": 0.09259854334716995,
+      "create_simulator_s": 0.0009894549536208312,
+      "extract_statevector_s": 0.00025331896419326466,
+      "init_statevector_s": 0.00031872869779666263,
+      "set_cuda_visible_devices_s": 7.658226725955804e-05,
+      "set_statevector_instruction_s": 0.2376975550626715,
+      "simulator_run_result_s": 738.1840280253285,
+      "total_s": 750.566092817268,
+      "transpile_s": 11.845750838983804
+    },
+    "mean_cpu_preprocess_s": 12.17826714203693,
+    "mean_gpu_backend_s": 738.1842813442927,
+    "total_runtime_s": 752.4288884398993,
+    "rz_layer_time": 0.12
+  },
+  "fit": {
+    "exponent": 2.007826744337052,
+    "coeff": 0.04909773033148724,
+    "avg_coeff": 0.04830191206025526,
+    "r2": 0.9999999857854558
+  },
+  "rz_layers": {
+    "u_rz_count": 872700,
+    "u_rz_depth": 47094,
+    "d_rz_count": 16549,
+    "d_rz_depth": 1321,
+    "total_rz_count": 889249,
+    "total_rz_depth": 48415,
+    "u_nonclifford_rz_count": 19546,
+    "u_nonclifford_rz_depth": 2276,
+    "d_nonclifford_rz_count": 12466,
+    "d_nonclifford_rz_depth": 1117,
+    "total_nonclifford_rz_count": 32012,
+    "total_nonclifford_rz_depth": 3393,
+    "u_nonclifford_z_coloring_depth": 2020,
+    "d_nonclifford_z_coloring_depth": 1211,
+    "total_nonclifford_z_coloring_depth": 3231,
+    "u_block_costs": [
+      {
+        "label": "one_body",
+        "rz_count": 8693,
+        "rz_depth": 458,
+        "nonclifford_rz_count": 108,
+        "nonclifford_rz_depth": 13
+      },
+      {
+        "label": "df[0]",
+        "rz_count": 8639,
+        "rz_depth": 467,
+        "nonclifford_rz_count": 148,
+        "nonclifford_rz_depth": 20
+      },
+      {
+        "label": "df[1]",
+        "rz_count": 8261,
+        "rz_depth": 467,
+        "nonclifford_rz_count": 114,
+        "nonclifford_rz_depth": 19
+      },
+      {
+        "label": "df[2]",
+        "rz_count": 8558,
+        "rz_depth": 449,
+        "nonclifford_rz_count": 241,
+        "nonclifford_rz_depth": 26
+      },
+      {
+        "label": "df[3]",
+        "rz_count": 8477,
+        "rz_depth": 467,
+        "nonclifford_rz_count": 147,
+        "nonclifford_rz_depth": 19
+      },
+      {
+        "label": "df[4]",
+        "rz_count": 8666,
+        "rz_depth": 449,
+        "nonclifford_rz_count": 256,
+        "nonclifford_rz_depth": 26
+      },
+      {
+        "label": "df[5]",
+        "rz_count": 8774,
+        "rz_depth": 467,
+        "nonclifford_rz_count": 240,
+        "nonclifford_rz_depth": 26
+      },
+      {
+        "label": "df[6]",
+        "rz_count": 8450,
+        "rz_depth": 458,
+        "nonclifford_rz_count": 115,
+        "nonclifford_rz_depth": 16
+      },
+      {
+        "label": "df[7]",
+        "rz_count": 8693,
+        "rz_depth": 467,
+        "nonclifford_rz_count": 206,
+        "nonclifford_rz_depth": 26
+      },
+      {
+        "label": "df[8]",
+        "rz_count": 8288,
+        "rz_depth": 458,
+        "nonclifford_rz_count": 137,
+        "nonclifford_rz_depth": 22
+      },
+      {
+        "label": "df[9]",
+        "rz_count": 8612,
+        "rz_depth": 467,
+        "nonclifford_rz_count": 145,
+        "nonclifford_rz_depth": 21
+      },
+      {
+        "label": "df[10]",
+        "rz_count": 8126,
+        "rz_depth": 458,
+        "nonclifford_rz_count": 117,
+        "nonclifford_rz_depth": 20
+      },
+      {
+        "label": "df[11]",
+        "rz_count": 8612,
+        "rz_depth": 467,
+        "nonclifford_rz_count": 127,
+        "nonclifford_rz_depth": 18
+      },
+      {
+        "label": "df[12]",
+        "rz_count": 8504,
+        "rz_depth": 458,
+        "nonclifford_rz_count": 239,
+        "nonclifford_rz_depth": 26
+      },
+      {
+        "label": "df[13]",
+        "rz_count": 8423,
+        "rz_depth": 458,
+        "nonclifford_rz_count": 108,
+        "nonclifford_rz_depth": 16
+      },
+      {
+        "label": "df[14]",
+        "rz_count": 8612,
+        "rz_depth": 467,
+        "nonclifford_rz_count": 231,
+        "nonclifford_rz_depth": 26
+      },
+      {
+        "label": "df[15]",
+        "rz_count": 8585,
+        "rz_depth": 449,
+        "nonclifford_rz_count": 279,
+        "nonclifford_rz_depth": 26
+      },
+      {
+        "label": "df[16]",
+        "rz_count": 8423,
+        "rz_depth": 467,
+        "nonclifford_rz_count": 108,
+        "nonclifford_rz_depth": 18
+      },
+      {
+        "label": "df[17]",
+        "rz_count": 8693,
+        "rz_depth": 467,
+        "nonclifford_rz_count": 287,
+        "nonclifford_rz_depth": 26
+      },
+      {
+        "label": "df[18]",
+        "rz_count": 8423,
+        "rz_depth": 458,
+        "nonclifford_rz_count": 108,
+        "nonclifford_rz_depth": 17
+      },
+      {
+        "label": "df[19]",
+        "rz_count": 8693,
+        "rz_depth": 467,
+        "nonclifford_rz_count": 273,
+        "nonclifford_rz_depth": 26
+      },
+      {
+        "label": "df[20]",
+        "rz_count": 8747,
+        "rz_depth": 458,
+        "nonclifford_rz_count": 267,
+        "nonclifford_rz_depth": 26
+      },
+      {
+        "label": "df[21]",
+        "rz_count": 8720,
+        "rz_depth": 458,
+        "nonclifford_rz_count": 300,
+        "nonclifford_rz_depth": 26
+      },
+      {
+        "label": "df[22]",
+        "rz_count": 8693,
+        "rz_depth": 467,
+        "nonclifford_rz_count": 306,
+        "nonclifford_rz_depth": 26
+      },
+      {
+        "label": "df[23]",
+        "rz_count": 8450,
+        "rz_depth": 467,
+        "nonclifford_rz_count": 139,
+        "nonclifford_rz_depth": 25
+      },
+      {
+        "label": "df[24]",
+        "rz_count": 8720,
+        "rz_depth": 467,
+        "nonclifford_rz_count": 281,
+        "nonclifford_rz_depth": 26
+      }
+    ],
+    "d_block_costs": [
+      {
+        "label": "one_body_D",
+        "rz_count": 26,
+        "rz_depth": 1,
+        "nonclifford_rz_count": 26,
+        "nonclifford_rz_depth": 1
+      },
+      {
+        "label": "df[0]_D",
+        "rz_count": 325,
+        "rz_depth": 49,
+        "nonclifford_rz_count": 276,
+        "nonclifford_rz_depth": 45
+      },
+      {
+        "label": "df[1]_D",
+        "rz_count": 351,
+        "rz_depth": 50,
+        "nonclifford_rz_count": 351,
+        "nonclifford_rz_depth": 50
+      },
+      {
+        "label": "df[2]_D",
+        "rz_count": 325,
+        "rz_depth": 49,
+        "nonclifford_rz_count": 276,
+        "nonclifford_rz_depth": 45
+      },
+      {
+        "label": "df[3]_D",
+        "rz_count": 351,
+        "rz_depth": 50,
+        "nonclifford_rz_count": 351,
+        "nonclifford_rz_depth": 50
+      },
+      {
+        "label": "df[4]_D",
+        "rz_count": 325,
+        "rz_depth": 49,
+        "nonclifford_rz_count": 276,
+        "nonclifford_rz_depth": 45
+      },
+      {
+        "label": "df[5]_D",
+        "rz_count": 351,
+        "rz_depth": 50,
+        "nonclifford_rz_count": 351,
+        "nonclifford_rz_depth": 50
+      },
+      {
+        "label": "df[6]_D",
+        "rz_count": 351,
+        "rz_depth": 50,
+        "nonclifford_rz_count": 351,
+        "nonclifford_rz_depth": 50
+      },
+      {
+        "label": "df[7]_D",
+        "rz_count": 325,
+        "rz_depth": 49,
+        "nonclifford_rz_count": 276,
+        "nonclifford_rz_depth": 45
+      },
+      {
+        "label": "df[8]_D",
+        "rz_count": 351,
+        "rz_depth": 50,
+        "nonclifford_rz_count": 351,
+        "nonclifford_rz_depth": 50
+      },
+      {
+        "label": "df[9]_D",
+        "rz_count": 325,
+        "rz_depth": 49,
+        "nonclifford_rz_count": 276,
+        "nonclifford_rz_depth": 45
+      },
+      {
+        "label": "df[10]_D",
+        "rz_count": 351,
+        "rz_depth": 50,
+        "nonclifford_rz_count": 351,
+        "nonclifford_rz_depth": 50
+      },
+      {
+        "label": "df[11]_D",
+        "rz_count": 325,
+        "rz_depth": 49,
+        "nonclifford_rz_count": 276,
+        "nonclifford_rz_depth": 45
+      },
+      {
+        "label": "df[12]_D",
+        "rz_count": 351,
+        "rz_depth": 50,
+        "nonclifford_rz_count": 351,
+        "nonclifford_rz_depth": 50
+      },
+      {
+        "label": "df[13]_D",
+        "rz_count": 351,
+        "rz_depth": 50,
+        "nonclifford_rz_count": 351,
+        "nonclifford_rz_depth": 50
+      },
+      {
+        "label": "df[14]_D",
+        "rz_count": 325,
+        "rz_depth": 49,
+        "nonclifford_rz_count": 276,
+        "nonclifford_rz_depth": 45
+      },
+      {
+        "label": "df[15]_D",
+        "rz_count": 325,
+        "rz_depth": 49,
+        "nonclifford_rz_count": 276,
+        "nonclifford_rz_depth": 45
+      },
+      {
+        "label": "df[16]_D",
+        "rz_count": 351,
+        "rz_depth": 50,
+        "nonclifford_rz_count": 351,
+        "nonclifford_rz_depth": 50
+      },
+      {
+        "label": "df[17]_D",
+        "rz_count": 325,
+        "rz_depth": 49,
+        "nonclifford_rz_count": 0,
+        "nonclifford_rz_depth": 0
+      },
+      {
+        "label": "df[18]_D",
+        "rz_count": 351,
+        "rz_depth": 50,
+        "nonclifford_rz_count": 351,
+        "nonclifford_rz_depth": 50
+      },
+      {
+        "label": "df[19]_D",
+        "rz_count": 325,
+        "rz_depth": 49,
+        "nonclifford_rz_count": 0,
+        "nonclifford_rz_depth": 0
+      },
+      {
+        "label": "df[20]_D",
+        "rz_count": 325,
+        "rz_depth": 49,
+        "nonclifford_rz_count": 0,
+        "nonclifford_rz_depth": 0
+      },
+      {
+        "label": "df[21]_D",
+        "rz_count": 325,
+        "rz_depth": 49,
+        "nonclifford_rz_count": 0,
+        "nonclifford_rz_depth": 0
+      },
+      {
+        "label": "df[22]_D",
+        "rz_count": 325,
+        "rz_depth": 49,
+        "nonclifford_rz_count": 0,
+        "nonclifford_rz_depth": 0
+      },
+      {
+        "label": "df[23]_D",
+        "rz_count": 351,
+        "rz_depth": 50,
+        "nonclifford_rz_count": 351,
+        "nonclifford_rz_depth": 50
+      },
+      {
+        "label": "df[24]_D",
+        "rz_count": 325,
+        "rz_depth": 49,
+        "nonclifford_rz_count": 276,
+        "nonclifford_rz_depth": 45
+      }
+    ],
+    "molecule_type": 13,
+    "num_qubits": 26,
+    "pf_label": "2nd",
+    "time": 0.12,
+    "u_ref_rz_depth": 47094,
+    "d_ref_rz_depth": 1321,
+    "total_ref_rz_depth": 48415,
+    "u_ref_rz_count": 872700,
+    "d_ref_rz_count": 16549,
+    "total_ref_rz_count": 889249
+  }
+}

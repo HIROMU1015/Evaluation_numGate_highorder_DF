@@ -1,0 +1,49 @@
+{
+  "trace_mode": "per_pass",
+  "total_elapsed_seconds": 69.44598749605939,
+  "current_running": null,
+  "passes": [
+    {
+      "index": 0,
+      "pass_name": "ir::recursive_inliner",
+      "input_path": "/home/abe/Project/Evaluation_numGate_DF/artifacts/surface_code_cache/gr/ftqc_compile/H3_sto-3g_triplet_1__distance_100_charge_1_grouping__2nd/ftqc_compile_rot_layer_linear_floor_eta_1.000e-02_floor_1.000e-05_eps_1.593600101990e-04/step_ir.json",
+      "output_path": "/home/abe/Project/Evaluation_numGate_DF/artifacts/surface_code_cache/gr/ftqc_compile/H3_sto-3g_triplet_1__distance_100_charge_1_grouping__2nd/ftqc_compile_rot_layer_linear_floor_eta_1.000e-02_floor_1.000e-05_eps_1.593600101990e-04/step_opt_pass_00.json",
+      "elapsed_seconds": 0.42681698501110077
+    },
+    {
+      "index": 1,
+      "pass_name": "ir::static_condition_pruning",
+      "input_path": "/home/abe/Project/Evaluation_numGate_DF/artifacts/surface_code_cache/gr/ftqc_compile/H3_sto-3g_triplet_1__distance_100_charge_1_grouping__2nd/ftqc_compile_rot_layer_linear_floor_eta_1.000e-02_floor_1.000e-05_eps_1.593600101990e-04/step_opt_pass_00.json",
+      "output_path": "/home/abe/Project/Evaluation_numGate_DF/artifacts/surface_code_cache/gr/ftqc_compile/H3_sto-3g_triplet_1__distance_100_charge_1_grouping__2nd/ftqc_compile_rot_layer_linear_floor_eta_1.000e-02_floor_1.000e-05_eps_1.593600101990e-04/step_opt_pass_01.json",
+      "elapsed_seconds": 0.015006030909717083
+    },
+    {
+      "index": 2,
+      "pass_name": "ir::decompose_inst",
+      "input_path": "/home/abe/Project/Evaluation_numGate_DF/artifacts/surface_code_cache/gr/ftqc_compile/H3_sto-3g_triplet_1__distance_100_charge_1_grouping__2nd/ftqc_compile_rot_layer_linear_floor_eta_1.000e-02_floor_1.000e-05_eps_1.593600101990e-04/step_opt_pass_01.json",
+      "output_path": "/home/abe/Project/Evaluation_numGate_DF/artifacts/surface_code_cache/gr/ftqc_compile/H3_sto-3g_triplet_1__distance_100_charge_1_grouping__2nd/ftqc_compile_rot_layer_linear_floor_eta_1.000e-02_floor_1.000e-05_eps_1.593600101990e-04/step_opt_pass_02.json",
+      "elapsed_seconds": 68.81669862102717
+    },
+    {
+      "index": 3,
+      "pass_name": "ir::ignore_global_phase",
+      "input_path": "/home/abe/Project/Evaluation_numGate_DF/artifacts/surface_code_cache/gr/ftqc_compile/H3_sto-3g_triplet_1__distance_100_charge_1_grouping__2nd/ftqc_compile_rot_layer_linear_floor_eta_1.000e-02_floor_1.000e-05_eps_1.593600101990e-04/step_opt_pass_02.json",
+      "output_path": "/home/abe/Project/Evaluation_numGate_DF/artifacts/surface_code_cache/gr/ftqc_compile/H3_sto-3g_triplet_1__distance_100_charge_1_grouping__2nd/ftqc_compile_rot_layer_linear_floor_eta_1.000e-02_floor_1.000e-05_eps_1.593600101990e-04/step_opt_pass_03.json",
+      "elapsed_seconds": 0.059549927012994885
+    },
+    {
+      "index": 4,
+      "pass_name": "ir::delete_consecutive_same_pauli",
+      "input_path": "/home/abe/Project/Evaluation_numGate_DF/artifacts/surface_code_cache/gr/ftqc_compile/H3_sto-3g_triplet_1__distance_100_charge_1_grouping__2nd/ftqc_compile_rot_layer_linear_floor_eta_1.000e-02_floor_1.000e-05_eps_1.593600101990e-04/step_opt_pass_03.json",
+      "output_path": "/home/abe/Project/Evaluation_numGate_DF/artifacts/surface_code_cache/gr/ftqc_compile/H3_sto-3g_triplet_1__distance_100_charge_1_grouping__2nd/ftqc_compile_rot_layer_linear_floor_eta_1.000e-02_floor_1.000e-05_eps_1.593600101990e-04/step_opt_pass_04.json",
+      "elapsed_seconds": 0.058444821974262595
+    },
+    {
+      "index": 5,
+      "pass_name": "ir::delete_opt_hint",
+      "input_path": "/home/abe/Project/Evaluation_numGate_DF/artifacts/surface_code_cache/gr/ftqc_compile/H3_sto-3g_triplet_1__distance_100_charge_1_grouping__2nd/ftqc_compile_rot_layer_linear_floor_eta_1.000e-02_floor_1.000e-05_eps_1.593600101990e-04/step_opt_pass_04.json",
+      "output_path": "/home/abe/Project/Evaluation_numGate_DF/artifacts/surface_code_cache/gr/ftqc_compile/H3_sto-3g_triplet_1__distance_100_charge_1_grouping__2nd/ftqc_compile_rot_layer_linear_floor_eta_1.000e-02_floor_1.000e-05_eps_1.593600101990e-04/step_opt.json",
+      "elapsed_seconds": 0.05586825008504093
+    }
+  ]
+}

@@ -1,0 +1,49 @@
+{
+  "trace_mode": "per_pass",
+  "total_elapsed_seconds": 354.3795624440536,
+  "current_running": null,
+  "passes": [
+    {
+      "index": 0,
+      "pass_name": "ir::recursive_inliner",
+      "input_path": "/home/abe/Project/Evaluation_numGate_DF/artifacts/surface_code_cache/gr/ftqc_compile/H3_sto-3g_triplet_1__distance_100_charge_1_grouping__4th_new_2_/ftqc_compile_rot_layer_linear_floor_eta_1.000e-02_floor_1.000e-05_eps_1.593600101990e-04/step_ir.json",
+      "output_path": "/home/abe/Project/Evaluation_numGate_DF/artifacts/surface_code_cache/gr/ftqc_compile/H3_sto-3g_triplet_1__distance_100_charge_1_grouping__4th_new_2_/ftqc_compile_rot_layer_linear_floor_eta_1.000e-02_floor_1.000e-05_eps_1.593600101990e-04/step_opt_pass_00.json",
+      "elapsed_seconds": 15.65643504098989
+    },
+    {
+      "index": 1,
+      "pass_name": "ir::static_condition_pruning",
+      "input_path": "/home/abe/Project/Evaluation_numGate_DF/artifacts/surface_code_cache/gr/ftqc_compile/H3_sto-3g_triplet_1__distance_100_charge_1_grouping__4th_new_2_/ftqc_compile_rot_layer_linear_floor_eta_1.000e-02_floor_1.000e-05_eps_1.593600101990e-04/step_opt_pass_00.json",
+      "output_path": "/home/abe/Project/Evaluation_numGate_DF/artifacts/surface_code_cache/gr/ftqc_compile/H3_sto-3g_triplet_1__distance_100_charge_1_grouping__4th_new_2_/ftqc_compile_rot_layer_linear_floor_eta_1.000e-02_floor_1.000e-05_eps_1.593600101990e-04/step_opt_pass_01.json",
+      "elapsed_seconds": 0.061784327030181885
+    },
+    {
+      "index": 2,
+      "pass_name": "ir::decompose_inst",
+      "input_path": "/home/abe/Project/Evaluation_numGate_DF/artifacts/surface_code_cache/gr/ftqc_compile/H3_sto-3g_triplet_1__distance_100_charge_1_grouping__4th_new_2_/ftqc_compile_rot_layer_linear_floor_eta_1.000e-02_floor_1.000e-05_eps_1.593600101990e-04/step_opt_pass_01.json",
+      "output_path": "/home/abe/Project/Evaluation_numGate_DF/artifacts/surface_code_cache/gr/ftqc_compile/H3_sto-3g_triplet_1__distance_100_charge_1_grouping__4th_new_2_/ftqc_compile_rot_layer_linear_floor_eta_1.000e-02_floor_1.000e-05_eps_1.593600101990e-04/step_opt_pass_02.json",
+      "elapsed_seconds": 337.84675542707555
+    },
+    {
+      "index": 3,
+      "pass_name": "ir::ignore_global_phase",
+      "input_path": "/home/abe/Project/Evaluation_numGate_DF/artifacts/surface_code_cache/gr/ftqc_compile/H3_sto-3g_triplet_1__distance_100_charge_1_grouping__4th_new_2_/ftqc_compile_rot_layer_linear_floor_eta_1.000e-02_floor_1.000e-05_eps_1.593600101990e-04/step_opt_pass_02.json",
+      "output_path": "/home/abe/Project/Evaluation_numGate_DF/artifacts/surface_code_cache/gr/ftqc_compile/H3_sto-3g_triplet_1__distance_100_charge_1_grouping__4th_new_2_/ftqc_compile_rot_layer_linear_floor_eta_1.000e-02_floor_1.000e-05_eps_1.593600101990e-04/step_opt_pass_03.json",
+      "elapsed_seconds": 0.28151950892060995
+    },
+    {
+      "index": 4,
+      "pass_name": "ir::delete_consecutive_same_pauli",
+      "input_path": "/home/abe/Project/Evaluation_numGate_DF/artifacts/surface_code_cache/gr/ftqc_compile/H3_sto-3g_triplet_1__distance_100_charge_1_grouping__4th_new_2_/ftqc_compile_rot_layer_linear_floor_eta_1.000e-02_floor_1.000e-05_eps_1.593600101990e-04/step_opt_pass_03.json",
+      "output_path": "/home/abe/Project/Evaluation_numGate_DF/artifacts/surface_code_cache/gr/ftqc_compile/H3_sto-3g_triplet_1__distance_100_charge_1_grouping__4th_new_2_/ftqc_compile_rot_layer_linear_floor_eta_1.000e-02_floor_1.000e-05_eps_1.593600101990e-04/step_opt_pass_04.json",
+      "elapsed_seconds": 0.2562249950133264
+    },
+    {
+      "index": 5,
+      "pass_name": "ir::delete_opt_hint",
+      "input_path": "/home/abe/Project/Evaluation_numGate_DF/artifacts/surface_code_cache/gr/ftqc_compile/H3_sto-3g_triplet_1__distance_100_charge_1_grouping__4th_new_2_/ftqc_compile_rot_layer_linear_floor_eta_1.000e-02_floor_1.000e-05_eps_1.593600101990e-04/step_opt_pass_04.json",
+      "output_path": "/home/abe/Project/Evaluation_numGate_DF/artifacts/surface_code_cache/gr/ftqc_compile/H3_sto-3g_triplet_1__distance_100_charge_1_grouping__4th_new_2_/ftqc_compile_rot_layer_linear_floor_eta_1.000e-02_floor_1.000e-05_eps_1.593600101990e-04/step_opt.json",
+      "elapsed_seconds": 0.25452868500724435
+    }
+  ]
+}

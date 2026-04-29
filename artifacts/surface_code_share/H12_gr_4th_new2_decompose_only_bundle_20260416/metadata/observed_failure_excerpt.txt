@@ -1,0 +1,11 @@
+Observed notebook failure before chunked aggregation:
+
+RuntimeError: surface_code command failed (code=-9):
+/home/abe/Project/Evaluation_numGate_DF/surface_code/demo_linux_macos/demo_linux_local/bin/qcsf parse   --input .../step.qasm   --output .../step_ir.json   --format OpenQASM2 --verbose
+
+stdout/stderr excerpt:
+2026-04-09 06:04:07 - INFO  - Construct OpenQASM2 ast.
+
+Interpretation:
+- return code -9 suggests SIGKILL, most likely OOM killer or process termination by memory pressure.
+- failure happened in qcsf parse, before qcsf opt/compile.

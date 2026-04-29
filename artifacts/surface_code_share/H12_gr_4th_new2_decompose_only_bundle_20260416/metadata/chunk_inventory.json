@@ -1,0 +1,284 @@
+[
+  {
+    "chunk": "chunk_0000",
+    "qasm_bytes": 3466832,
+    "ir_exists": true,
+    "opt_exists": true
+  },
+  {
+    "chunk": "chunk_0001",
+    "qasm_bytes": 3439769,
+    "ir_exists": true,
+    "opt_exists": true
+  },
+  {
+    "chunk": "chunk_0002",
+    "qasm_bytes": 3394757,
+    "ir_exists": true,
+    "opt_exists": true
+  },
+  {
+    "chunk": "chunk_0003",
+    "qasm_bytes": 3287051,
+    "ir_exists": true,
+    "opt_exists": true
+  },
+  {
+    "chunk": "chunk_0004",
+    "qasm_bytes": 3386416,
+    "ir_exists": true,
+    "opt_exists": true
+  },
+  {
+    "chunk": "chunk_0005",
+    "qasm_bytes": 3541567,
+    "ir_exists": true,
+    "opt_exists": true
+  },
+  {
+    "chunk": "chunk_0006",
+    "qasm_bytes": 3484434,
+    "ir_exists": true,
+    "opt_exists": true
+  },
+  {
+    "chunk": "chunk_0007",
+    "qasm_bytes": 3436123,
+    "ir_exists": true,
+    "opt_exists": true
+  },
+  {
+    "chunk": "chunk_0008",
+    "qasm_bytes": 3442037,
+    "ir_exists": true,
+    "opt_exists": true
+  },
+  {
+    "chunk": "chunk_0009",
+    "qasm_bytes": 3486267,
+    "ir_exists": true,
+    "opt_exists": true
+  },
+  {
+    "chunk": "chunk_0010",
+    "qasm_bytes": 3439864,
+    "ir_exists": true,
+    "opt_exists": true
+  },
+  {
+    "chunk": "chunk_0011",
+    "qasm_bytes": 3425234,
+    "ir_exists": true,
+    "opt_exists": true
+  },
+  {
+    "chunk": "chunk_0012",
+    "qasm_bytes": 3291743,
+    "ir_exists": true,
+    "opt_exists": true
+  },
+  {
+    "chunk": "chunk_0013",
+    "qasm_bytes": 3321476,
+    "ir_exists": true,
+    "opt_exists": true
+  },
+  {
+    "chunk": "chunk_0014",
+    "qasm_bytes": 3542436,
+    "ir_exists": true,
+    "opt_exists": true
+  },
+  {
+    "chunk": "chunk_0015",
+    "qasm_bytes": 3515792,
+    "ir_exists": true,
+    "opt_exists": true
+  },
+  {
+    "chunk": "chunk_0016",
+    "qasm_bytes": 3428536,
+    "ir_exists": true,
+    "opt_exists": true
+  },
+  {
+    "chunk": "chunk_0017",
+    "qasm_bytes": 3438748,
+    "ir_exists": true,
+    "opt_exists": true
+  },
+  {
+    "chunk": "chunk_0018",
+    "qasm_bytes": 3491479,
+    "ir_exists": true,
+    "opt_exists": true
+  },
+  {
+    "chunk": "chunk_0019",
+    "qasm_bytes": 3437240,
+    "ir_exists": true,
+    "opt_exists": true
+  },
+  {
+    "chunk": "chunk_0020",
+    "qasm_bytes": 3428672,
+    "ir_exists": true,
+    "opt_exists": true
+  },
+  {
+    "chunk": "chunk_0021",
+    "qasm_bytes": 3327184,
+    "ir_exists": true,
+    "opt_exists": true
+  },
+  {
+    "chunk": "chunk_0022",
+    "qasm_bytes": 3286357,
+    "ir_exists": true,
+    "opt_exists": true
+  },
+  {
+    "chunk": "chunk_0023",
+    "qasm_bytes": 3516198,
+    "ir_exists": true,
+    "opt_exists": true
+  },
+  {
+    "chunk": "chunk_0024",
+    "qasm_bytes": 3539628,
+    "ir_exists": true,
+    "opt_exists": true
+  },
+  {
+    "chunk": "chunk_0025",
+    "qasm_bytes": 3424359,
+    "ir_exists": true,
+    "opt_exists": true
+  },
+  {
+    "chunk": "chunk_0026",
+    "qasm_bytes": 3440534,
+    "ir_exists": true,
+    "opt_exists": true
+  },
+  {
+    "chunk": "chunk_0027",
+    "qasm_bytes": 3487689,
+    "ir_exists": true,
+    "opt_exists": true
+  },
+  {
+    "chunk": "chunk_0028",
+    "qasm_bytes": 3440411,
+    "ir_exists": true,
+    "opt_exists": true
+  },
+  {
+    "chunk": "chunk_0029",
+    "qasm_bytes": 3435233,
+    "ir_exists": true,
+    "opt_exists": true
+  },
+  {
+    "chunk": "chunk_0030",
+    "qasm_bytes": 3360867,
+    "ir_exists": true,
+    "opt_exists": true
+  },
+  {
+    "chunk": "chunk_0031",
+    "qasm_bytes": 3285612,
+    "ir_exists": true,
+    "opt_exists": true
+  },
+  {
+    "chunk": "chunk_0032",
+    "qasm_bytes": 3455719,
+    "ir_exists": true,
+    "opt_exists": true
+  },
+  {
+    "chunk": "chunk_0033",
+    "qasm_bytes": 3542089,
+    "ir_exists": true,
+    "opt_exists": true
+  },
+  {
+    "chunk": "chunk_0034",
+    "qasm_bytes": 3450097,
+    "ir_exists": true,
+    "opt_exists": true
+  },
+  {
+    "chunk": "chunk_0035",
+    "qasm_bytes": 3440214,
+    "ir_exists": true,
+    "opt_exists": true
+  },
+  {
+    "chunk": "chunk_0036",
+    "qasm_bytes": 3469941,
+    "ir_exists": true,
+    "opt_exists": true
+  },
+  {
+    "chunk": "chunk_0037",
+    "qasm_bytes": 3456970,
+    "ir_exists": true,
+    "opt_exists": true
+  },
+  {
+    "chunk": "chunk_0038",
+    "qasm_bytes": 3439806,
+    "ir_exists": true,
+    "opt_exists": true
+  },
+  {
+    "chunk": "chunk_0039",
+    "qasm_bytes": 3392033,
+    "ir_exists": true,
+    "opt_exists": true
+  },
+  {
+    "chunk": "chunk_0040",
+    "qasm_bytes": 3286668,
+    "ir_exists": true,
+    "opt_exists": true
+  },
+  {
+    "chunk": "chunk_0041",
+    "qasm_bytes": 3392414,
+    "ir_exists": true,
+    "opt_exists": true
+  },
+  {
+    "chunk": "chunk_0042",
+    "qasm_bytes": 3541561,
+    "ir_exists": true,
+    "opt_exists": true
+  },
+  {
+    "chunk": "chunk_0043",
+    "qasm_bytes": 3481350,
+    "ir_exists": true,
+    "opt_exists": true
+  },
+  {
+    "chunk": "chunk_0044",
+    "qasm_bytes": 3436829,
+    "ir_exists": true,
+    "opt_exists": true
+  },
+  {
+    "chunk": "chunk_0045",
+    "qasm_bytes": 3441366,
+    "ir_exists": true,
+    "opt_exists": true
+  },
+  {
+    "chunk": "chunk_0046",
+    "qasm_bytes": 808569,
+    "ir_exists": true,
+    "opt_exists": true
+  }
+]

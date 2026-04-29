@@ -1,0 +1,7 @@
+This H4 case is a successful small-case reference bundle.
+
+- `qcsf parse` completed successfully.
+- `qcsf opt` completed successfully.
+- `qcsf compile` completed successfully and produced `compile_info.json` and `step.asm`.
+
+This bundle is intended to complement the larger H12 bundle, which is useful for diagnosing size-related failures or extreme slowdown.

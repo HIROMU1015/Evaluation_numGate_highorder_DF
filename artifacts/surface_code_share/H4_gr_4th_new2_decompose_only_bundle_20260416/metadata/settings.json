@@ -1,0 +1,16 @@
+{
+  "ham_name": "H4_sto-3g_singlet_distance_100_charge_0_grouping",
+  "pf_label": "4th(new_2)",
+  "source": "gr",
+  "compile_mode": "decompose_only",
+  "generator": "decompose_only_ir",
+  "target_error": 0.00015936001019904,
+  "step_time": 1.925283880931039,
+  "rotation_precision": 1e-05,
+  "cache_key": "decompose_only:rot_layer_linear_floor_eta_1.000e-02_floor_1.000e-05:eps_1.593600101990e-04",
+  "rotation_precision_mode": "layer_linear_floor",
+  "rotation_precision_floor": 1e-05,
+  "rotation_error_budget_fraction": 0.01,
+  "qcsf_path": "/home/abe/Project/Evaluation_numGate_DF/surface_code/demo_linux_macos/demo_linux_local/bin/qcsf",
+  "runtime_root": "/home/abe/Project/Evaluation_numGate_DF/artifacts/surface_code_cache/gr/decompose_only/H4_sto-3g_singlet_distance_100_charge_0_grouping__4th_new_2_/decompose_only_rot_layer_linear_floor_eta_1.000e-02_floor_1.000e-05_eps_1.593600101990e-04"
+}

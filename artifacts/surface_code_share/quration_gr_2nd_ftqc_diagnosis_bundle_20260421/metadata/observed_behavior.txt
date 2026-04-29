@@ -1,0 +1,7 @@
+H3: total wall-clock 70.1s; qret compile 0.4s; recursive_inliner 0.4s; decompose_inst 68.8s.
+H3: instruction_total grows 3631 -> 6095 -> 37493.
+H3: file size grows 229822 bytes -> 196557 bytes -> 982971 bytes.
+
+H4: total wall-clock 331.1s; qret compile 1.5s; recursive_inliner 13.0s; decompose_inst 314.5s.
+H4: instruction_total grows 16497 -> 28129 -> 138541.
+H4: file size grows 1056598 bytes -> 899565 bytes -> 3780273 bytes.

@@ -1,0 +1,37 @@
+{
+  "case": {
+    "ham_name": "H4_sto-3g_singlet_distance_100_charge_0_grouping",
+    "pf_label": "4th(new_2)",
+    "source": "gr"
+  },
+  "plain_language_routes": {
+    "parse_and_opt": "OpenQASM2 -> qcsf parse -> qcsf opt -> local T-count/T-depth extraction from optimized IR",
+    "ftqc_compile": "optimized IR -> qcsf compile with FTQC target -> compile_info.json and step.asm"
+  },
+  "internal_labels_used_in_our_scripts": {
+    "parse_and_opt": "decompose_only",
+    "ftqc_compile": "lightweight"
+  },
+  "run_parameters": {
+    "target_error": 0.00015936001019904,
+    "rotation_precision": 1e-05
+  },
+  "parse_and_opt_summary": {
+    "t_count_proxy": 91300,
+    "t_depth_proxy": 71034,
+    "gate_count": 401906,
+    "gate_depth": 236096,
+    "runtime_proxy": 401906,
+    "generator": "decompose_only_ir"
+  },
+  "ftqc_compile_summary": {
+    "magic_state_consumption_count": 91300,
+    "magic_state_consumption_depth": 71034,
+    "measurement_feedback_count": 91300,
+    "measurement_feedback_depth": 71034,
+    "gate_count": 490534,
+    "gate_depth": 230653,
+    "runtime_without_topology": 419747,
+    "magic_factory_count": 4
+  }
+}

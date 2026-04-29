@@ -1,0 +1,10 @@
+input: step_ir.json
+function: main
+output: step_opt.json
+pass:
+- ir::recursive_inliner
+- ir::static_condition_pruning
+- ir::decompose_inst
+- ir::ignore_global_phase
+- ir::delete_consecutive_same_pauli
+- ir::delete_opt_hint

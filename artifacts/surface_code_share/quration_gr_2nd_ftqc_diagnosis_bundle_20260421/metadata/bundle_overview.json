@@ -1,0 +1,13 @@
+{
+  "bundle_name": "quration_gr_2nd_ftqc_diagnosis_bundle_20260421",
+  "purpose": "共有用: open-source quration build で grouped 2nd one-step Trotter circuit の FTQC compile が重くなる原因を確認してもらうための資料。",
+  "cases": [
+    "H3",
+    "H4"
+  ],
+  "main_findings": [
+    "H3, H4 の両方で qret compile まで成功する。",
+    "wall-clock time の支配要因は qret compile ではなく qret opt である。",
+    "qret opt の中では ir::decompose_inst が最も重く、次に ir::recursive_inliner が重い。"
+  ]
+}

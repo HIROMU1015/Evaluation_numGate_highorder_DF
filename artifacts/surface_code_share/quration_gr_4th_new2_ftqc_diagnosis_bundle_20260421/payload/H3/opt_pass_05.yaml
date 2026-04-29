@@ -1,0 +1,5 @@
+input: step_opt_pass_04.json
+function: main
+output: step_opt.json
+pass:
+- ir::delete_opt_hint

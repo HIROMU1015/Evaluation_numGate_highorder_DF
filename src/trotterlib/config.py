@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass
 from pathlib import Path
+from pprint import pformat
 from typing import Dict, Iterable, TypeAlias
 
 
@@ -18,6 +20,28 @@ def _find_project_root(start: Path) -> Path:
             return p
     # 見つからなければ config.py のあるディレクトリを root 扱い
     return start
+
+
+def _first_existing_path(*candidates: Path) -> Path:
+    """存在する候補を先頭から返す。なければ最初の候補を返す。"""
+    if not candidates:
+        raise ValueError("at least one path candidate is required")
+    for path in candidates:
+        if path.exists():
+            return path
+    return candidates[0]
+
+
+def _unique_paths(paths: Iterable[Path]) -> tuple[Path, ...]:
+    """順序を保ったまま重複 Path を除く。"""
+    out: list[Path] = []
+    seen: set[Path] = set()
+    for path in paths:
+        if path in seen:
+            continue
+        seen.add(path)
+        out.append(path)
+    return tuple(out)
 
 
 # 環境変数で明示できるように（CI や別配置でも事故らない）
@@ -137,6 +161,7 @@ SURFACE_CODE_COMPILE_MODE = "decompose_only"
 SURFACE_CODE_RUNTIME_METRIC = "runtime_without_topology"
 SURFACE_CODE_COMPILE_SKIP_REDUNDANT_IR_PREPROCESS = True
 SURFACE_CODE_COMPILE_SKIP_OUTPUT = True
+SURFACE_CODE_OPT_TRACE_PASSES = True
 SURFACE_CODE_ROTATION_PRECISION_MODE = "layer_linear_floor"
 SURFACE_CODE_FIXED_ROTATION_PRECISION = 1.0e-9
 SURFACE_CODE_ROTATION_ERROR_BUDGET_FRACTION = 1.0e-2
@@ -151,23 +176,83 @@ SURFACE_CODE_AUTO_POPULATE = True
 SURFACE_CODE_QASM_BASIS_GATES = ("rz", "cx", "sx", "x")
 SURFACE_CODE_QASM_DECOMPOSE_REPS = 8
 SURFACE_CODE_CACHE_DIR = ARTIFACTS_DIR / "surface_code_cache"
-SURFACE_CODE_BUNDLED_DEMO_ROOT = (
-    PROJECT_ROOT / "surface_code" / "demo_linux_macos" / "demo_linux"
+_surface_code_repo_env = (
+    os.environ.get("QURATION_ROOT")
+    or os.environ.get("SURFACE_CODE_REPO_ROOT")
 )
-SURFACE_CODE_LOCAL_DEMO_ROOT = (
-    PROJECT_ROOT / "surface_code" / "demo_linux_macos" / "demo_linux_local"
+SURFACE_CODE_EXTERNAL_REPO_ROOT = (
+    Path(_surface_code_repo_env).expanduser().resolve()
+    if _surface_code_repo_env
+    else (PROJECT_ROOT.parent / "quration").resolve()
 )
-SURFACE_CODE_DEMO_ROOT = (
-    SURFACE_CODE_LOCAL_DEMO_ROOT
-    if (SURFACE_CODE_LOCAL_DEMO_ROOT / "bin" / "qcsf").exists()
-    else SURFACE_CODE_BUNDLED_DEMO_ROOT
+SURFACE_CODE_LEGACY_REPO_ROOT = (PROJECT_ROOT / "surface_code").resolve()
+SURFACE_CODE_REPO_ROOT_CANDIDATES = _unique_paths(
+    (
+        SURFACE_CODE_EXTERNAL_REPO_ROOT,
+        SURFACE_CODE_LEGACY_REPO_ROOT,
+    )
 )
-SURFACE_CODE_QCSF_PATH = SURFACE_CODE_DEMO_ROOT / "bin" / "qcsf"
-SURFACE_CODE_TOPOLOGY_PATH = (
-    SURFACE_CODE_BUNDLED_DEMO_ROOT / "input" / "topology" / "tutorial.yaml"
+SURFACE_CODE_REPO_ROOT = _first_existing_path(
+    *SURFACE_CODE_REPO_ROOT_CANDIDATES,
 )
-SURFACE_CODE_GRIDSYNTH_PATH = (
-    PROJECT_ROOT / "surface_code" / "src_new" / "src" / "externals" / "bin" / "gridsynth"
+
+# 旧 `surface_code` レイアウトと、open-source の `quration` レイアウトの両方を許容する。
+SURFACE_CODE_BUNDLED_DEMO_ROOT = _first_existing_path(
+    *(
+        root / "demo_linux_macos" / "demo_linux"
+        for root in SURFACE_CODE_REPO_ROOT_CANDIDATES
+    ),
+    *SURFACE_CODE_REPO_ROOT_CANDIDATES,
+)
+SURFACE_CODE_LOCAL_DEMO_ROOT = _first_existing_path(
+    *(
+        root / "demo_linux_macos" / "demo_linux_local"
+        for root in SURFACE_CODE_REPO_ROOT_CANDIDATES
+    ),
+    SURFACE_CODE_BUNDLED_DEMO_ROOT,
+)
+SURFACE_CODE_DEMO_ROOT = _first_existing_path(
+    SURFACE_CODE_LOCAL_DEMO_ROOT,
+    SURFACE_CODE_BUNDLED_DEMO_ROOT,
+)
+SURFACE_CODE_QCSF_PATH = _first_existing_path(
+    *(
+        path
+        for root in SURFACE_CODE_REPO_ROOT_CANDIDATES
+        for path in (
+            root / "bin" / "main" / "qret",
+            root / "bin" / "main" / "qcsf",
+            root / "build" / "main" / "qret",
+            root / "build" / "main" / "qcsf",
+            root / "build" / "bin" / "qret",
+            root / "build" / "bin" / "qcsf",
+            root / "demo_linux_macos" / "demo_linux_local" / "bin" / "qcsf",
+            root / "demo_linux_macos" / "demo_linux" / "bin" / "qcsf",
+        )
+    ),
+)
+SURFACE_CODE_TOPOLOGY_PATH = _first_existing_path(
+    *(
+        path
+        for root in SURFACE_CODE_REPO_ROOT_CANDIDATES
+        for path in (
+            root / "examples" / "data" / "topology" / "tutorial.yaml",
+            root / "quration-core" / "examples" / "data" / "topology" / "tutorial.yaml",
+            root / "demo_linux_macos" / "demo_linux_local" / "input" / "topology" / "tutorial.yaml",
+            root / "demo_linux_macos" / "demo_linux" / "input" / "topology" / "tutorial.yaml",
+        )
+    ),
+)
+SURFACE_CODE_GRIDSYNTH_PATH = _first_existing_path(
+    *(
+        path
+        for root in SURFACE_CODE_REPO_ROOT_CANDIDATES
+        for path in (
+            root / "externals" / "bin" / "gridsynth",
+            root / "src_new" / "src" / "externals" / "bin" / "gridsynth",
+            root / "src" / "externals" / "bin" / "gridsynth",
+        )
+    ),
 )
 SURFACE_CODE_MACHINE_TYPE = "Dim2"
 SURFACE_CODE_MAGIC_GENERATION_PERIOD = 15
@@ -196,8 +281,74 @@ TIME_DIR_BY_MOLECULE: Dict[int, Dict[int, float]] = {
 }
 
 # molecule_type -> DF rank selection metadata.
-# 形式: {"rank_fraction": float, "selected_rank": int, "full_rank": int, "rank_ratio": "L/full"}
-DF_RANK_SELECTION_BY_MOLECULE: Dict[int, Dict[str, float | int | str]] = {2: {'rank_fraction': 0.75, 'selected_rank': 3, 'full_rank': 4, 'rank_ratio': '3/4'}, 3: {'rank_fraction': 0.5555555555555556, 'selected_rank': 5, 'full_rank': 9, 'rank_ratio': '5/9'}, 4: {'rank_fraction': 0.4375, 'selected_rank': 7, 'full_rank': 16, 'rank_ratio': '7/16'}, 5: {'rank_fraction': 0.36, 'selected_rank': 9, 'full_rank': 25, 'rank_ratio': '9/25'}, 6: {'rank_fraction': 0.3055555555555556, 'selected_rank': 11, 'full_rank': 36, 'rank_ratio': '11/36'}, 7: {'rank_fraction': 0.2653061224489796, 'selected_rank': 13, 'full_rank': 49, 'rank_ratio': '13/49'}, 8: {'rank_fraction': 0.234375, 'selected_rank': 15, 'full_rank': 64, 'rank_ratio': '15/64'}, 9: {'rank_fraction': 0.20987654320987653, 'selected_rank': 17, 'full_rank': 81, 'rank_ratio': '17/81'}, 10: {'rank_fraction': 0.25, 'selected_rank': 25, 'full_rank': 100, 'rank_ratio': '25/100'}, 11: {'rank_fraction': 0.17355371900826447, 'selected_rank': 21, 'full_rank': 121, 'rank_ratio': '21/121'}, 12: {'rank_fraction': 0.19444444444444445, 'selected_rank': 28, 'full_rank': 144, 'rank_ratio': '28/144'}}
+# 形式: {"rank_fraction": float, "selected_rank": int, "full_rank": int,
+#       "rank_ratio": "L/full", "target_error_ha": float?}
+DF_RANK_SELECTION_BY_MOLECULE: Dict[int, Dict[str, float | int | str]] = {2: {'rank_fraction': 0.75, 'selected_rank': 3, 'full_rank': 4, 'rank_ratio': '3/4'},
+ 3: {'rank_fraction': 0.5555555555555556,
+     'selected_rank': 5,
+     'full_rank': 9,
+     'rank_ratio': '5/9',
+     'target_error_ha': 1.5936001019904e-05},
+ 4: {'rank_fraction': 0.4375,
+     'selected_rank': 7,
+     'full_rank': 16,
+     'rank_ratio': '7/16',
+     'target_error_ha': 1.5936001019904e-05},
+ 5: {'rank_fraction': 0.36,
+     'selected_rank': 9,
+     'full_rank': 25,
+     'rank_ratio': '9/25',
+     'target_error_ha': 1.5936001019904e-05},
+ 6: {'rank_fraction': 0.3055555555555556,
+     'selected_rank': 11,
+     'full_rank': 36,
+     'rank_ratio': '11/36',
+     'target_error_ha': 1.5936001019904e-05},
+ 7: {'rank_fraction': 0.2653061224489796,
+     'selected_rank': 13,
+     'full_rank': 49,
+     'rank_ratio': '13/49',
+     'target_error_ha': 1.5936001019904e-05},
+ 8: {'rank_fraction': 0.234375,
+     'selected_rank': 15,
+     'full_rank': 64,
+     'rank_ratio': '15/64',
+     'target_error_ha': 1.5936001019904e-05},
+ 9: {'rank_fraction': 0.20987654320987653,
+     'selected_rank': 17,
+     'full_rank': 81,
+     'rank_ratio': '17/81',
+     'target_error_ha': 1.5936001019904e-05},
+ 10: {'rank_fraction': 0.25,
+      'selected_rank': 25,
+      'full_rank': 100,
+      'rank_ratio': '25/100',
+      'target_error_ha': 1.5936001019904e-05},
+ 11: {'rank_fraction': 0.17355371900826447,
+      'selected_rank': 21,
+      'full_rank': 121,
+      'rank_ratio': '21/121',
+      'target_error_ha': 1.5936001019904e-05},
+ 12: {'rank_fraction': 0.19444444444444445,
+      'selected_rank': 28,
+      'full_rank': 144,
+      'rank_ratio': '28/144',
+      'target_error_ha': 1.5936001019904e-05},
+ 13: {'rank_fraction': 0.14792899408284024,
+      'selected_rank': 25,
+      'full_rank': 169,
+      'rank_ratio': '25/169',
+      'target_error_ha': 1.5936001019904e-05},
+ 14: {'rank_fraction': 0.1836734693877551,
+      'selected_rank': 36,
+      'full_rank': 196,
+      'rank_ratio': '36/196',
+      'target_error_ha': 1.5936001019904e-05},
+ 15: {'rank_fraction': 0.1288888888888889,
+      'selected_rank': 29,
+      'full_rank': 225,
+      'rank_ratio': '29/225',
+      'target_error_ha': 1.5936001019904e-05}}
 DF_RANK_SELECTION_BY_MOLECULE_x10 : Dict[int, Dict[str, float | int | str]] = {3: {'rank_fraction': 0.5555555555555556, 'selected_rank': 5, 'full_rank': 9, 'rank_ratio': '5/9'}, 4: {'rank_fraction': 0.4375, 'selected_rank': 7, 'full_rank': 16, 'rank_ratio': '7/16'}, 5: {'rank_fraction': 0.36, 'selected_rank': 9, 'full_rank': 25, 'rank_ratio': '9/25'}, 6: {'rank_fraction': 0.3055555555555556, 'selected_rank': 11, 'full_rank': 36, 'rank_ratio': '11/36'}, 7: {'rank_fraction': 0.2653061224489796, 'selected_rank': 13, 'full_rank': 49, 'rank_ratio': '13/49'}, 8: {'rank_fraction': 0.234375, 'selected_rank': 15, 'full_rank': 64, 'rank_ratio': '15/64'}, 9: {'rank_fraction': 0.20987654320987653, 'selected_rank': 17, 'full_rank': 81, 'rank_ratio': '17/81'}} 
 
 # Backward-compatible flat view.
@@ -235,6 +386,7 @@ def set_df_rank_fraction_for_molecule(
     *,
     selected_rank: int | None = None,
     full_rank: int | None = None,
+    target_error_ha: float | None = None,
 ) -> None:
     """molecule_type 用 rank_fraction 設定を更新し、rank 選択情報も保持する。"""
     molecule_key = int(molecule_type)
@@ -251,12 +403,52 @@ def set_df_rank_fraction_for_molecule(
         selected_rank_value = int(selected_rank)
     selected_rank_value = max(1, min(selected_rank_value, full_rank_value))
 
-    DF_RANK_SELECTION_BY_MOLECULE[molecule_key] = {
+    selection: Dict[str, float | int | str] = {
         "rank_fraction": fraction_value,
         "selected_rank": selected_rank_value,
         "full_rank": full_rank_value,
         "rank_ratio": f"{selected_rank_value}/{full_rank_value}",
     }
+    if target_error_ha is not None:
+        selection["target_error_ha"] = float(target_error_ha)
+    DF_RANK_SELECTION_BY_MOLECULE[molecule_key] = selection
+
+
+def persist_df_rank_selection_config(config_path: Path | None = None) -> Path:
+    """現在の DF rank 選択情報を config.py の定義へ永続反映する。"""
+    target = Path(config_path) if config_path is not None else Path(__file__)
+    target = target.resolve()
+
+    normalized: Dict[int, Dict[str, float | int | str]] = {}
+    for molecule_type in sorted(DF_RANK_SELECTION_BY_MOLECULE):
+        selection = DF_RANK_SELECTION_BY_MOLECULE[int(molecule_type)]
+        normalized[int(molecule_type)] = {
+            "rank_fraction": float(selection["rank_fraction"]),
+            "selected_rank": int(selection["selected_rank"]),
+            "full_rank": int(selection["full_rank"]),
+            "rank_ratio": str(selection["rank_ratio"]),
+        }
+        target_error_ha = selection.get("target_error_ha")
+        if target_error_ha is not None:
+            normalized[int(molecule_type)]["target_error_ha"] = float(target_error_ha)
+
+    rendered = pformat(normalized, width=120, sort_dicts=False)
+    pattern = re.compile(
+        r"(^DF_RANK_SELECTION_BY_MOLECULE: Dict\[int, Dict\[str, float \| int \| str\]\] = )"
+        r"(\{.*?\})"
+        r"(?=\nDF_RANK_SELECTION_BY_MOLECULE_x10\s*:)",
+        flags=re.MULTILINE | re.DOTALL,
+    )
+
+    original_text = target.read_text(encoding="utf-8")
+    updated_text, count = pattern.subn(rf"\1{rendered}", original_text, count=1)
+    if count != 1:
+        raise RuntimeError(
+            "Failed to locate DF_RANK_SELECTION_BY_MOLECULE definition in "
+            f"{target}."
+        )
+    target.write_text(updated_text, encoding="utf-8")
+    return target
 
 
 for _molecule_type, _selection in list(DF_RANK_SELECTION_BY_MOLECULE.items()):
@@ -274,6 +466,11 @@ for _molecule_type, _selection in list(DF_RANK_SELECTION_BY_MOLECULE.items()):
         full_rank=(
             int(_selection["full_rank"])
             if _selection.get("full_rank") is not None
+            else None
+        ),
+        target_error_ha=(
+            float(_selection["target_error_ha"])
+            if _selection.get("target_error_ha") is not None
             else None
         ),
     )

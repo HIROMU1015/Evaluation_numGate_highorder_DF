@@ -53,6 +53,7 @@ from .config import (
     SURFACE_CODE_COMPILE_MODE,
     SURFACE_CODE_COMPILE_SKIP_OUTPUT,
     SURFACE_CODE_COMPILE_SKIP_REDUNDANT_IR_PREPROCESS,
+    SURFACE_CODE_OPT_TRACE_PASSES,
     SURFACE_CODE_DELTA_FAIL_CASES,
     SURFACE_CODE_ENTANGLEMENT_GENERATION_PERIOD,
     SURFACE_CODE_MACHINE_TYPE,
@@ -183,6 +184,19 @@ def _hchain_series(Hchain: int) -> Tuple[List[int], List[str], List[int]]:
     return chain_list, chain_str, num_qubits
 
 
+def _normalize_compare_hchain_spec(Hchain: HChainSpec) -> List[int]:
+    """比較系プロット用の H-chain 指定を昇順の chain_list に正規化する。"""
+    if isinstance(Hchain, int):
+        if Hchain < 3:
+            raise ValueError("Hchain must be >= 3 for gr/df comparison.")
+        return [i for i in range(3, Hchain + 1)]
+
+    chain_list = sorted({int(chain) for chain in Hchain if int(chain) >= 3})
+    if not chain_list:
+        raise ValueError("Hchain range must include at least one chain >= 3.")
+    return chain_list
+
+
 def _compute_min_f(eps: float, expo: float, coeff: float) -> float:
     """外挿の最小コスト係数 min_f を計算する。"""
     return (
@@ -290,6 +304,7 @@ def _apply_loglog_fit_with_bands(
 
 
 NestedPFMapping: TypeAlias = Mapping[str, Mapping[PFLabel, float]]
+HChainSpec: TypeAlias = int | range | Sequence[int]
 
 
 def _lookup_nested_value(
@@ -815,6 +830,47 @@ def _load_df_artifact_payload(ham_name: str, pf_label: PFLabel) -> Dict[str, Any
     if not isinstance(data, dict):
         raise ValueError(f"Invalid DF artifact payload: {path}")
     return data
+
+
+DF_GPU_LATEST_RESULTS_PATH = PICKLE_DIR_DF_PATH.parent / "df_gpu_latest_results"
+
+
+def _df_gpu_latest_pf_file_tag(pf_label: PFLabel) -> str:
+    """df_gpu_latest_results 用の PF ラベル表記へ変換する。"""
+    canonical = normalize_pf_label(pf_label)
+    return re.sub(r"[^0-9A-Za-z]+", "_", canonical).strip("_")
+
+
+def _df_gpu_latest_payload_path(ham_name: str, pf_label: PFLabel) -> Path:
+    """df_gpu_latest_results 内の対応 pkl パスを返す。"""
+    molecule_type = _parse_molecule_type_from_ham_name(ham_name)
+    distance_tag = int(round(_parse_distance_from_ham_name(ham_name) * 100.0))
+    basis_tag = str(DEFAULT_BASIS).replace("-", "_")
+    pf_tag = _df_gpu_latest_pf_file_tag(pf_label)
+    pattern = (
+        f"H{molecule_type}_{basis_tag}_d{distance_tag}_{pf_tag}_df_gpu_*.pkl"
+    )
+    candidates = sorted(DF_GPU_LATEST_RESULTS_PATH.glob(pattern))
+    if not candidates:
+        raise FileNotFoundError(
+            f"Missing df_gpu_latest_results artifact for {ham_name}_Operator_{pf_label}"
+        )
+    if len(candidates) > 1:
+        raise ValueError(
+            "Ambiguous df_gpu_latest_results artifact for "
+            f"{ham_name}_Operator_{pf_label}: {[p.name for p in candidates]}"
+        )
+    return candidates[0]
+
+
+def _load_df_gpu_latest_payload(ham_name: str, pf_label: PFLabel) -> Dict[str, Any]:
+    """df_gpu_latest_results の保存 payload を読み込む。"""
+    path = _df_gpu_latest_payload_path(ham_name, pf_label)
+    with path.open("rb") as f:
+        data = pickle.load(f)
+    if not isinstance(data, Mapping):
+        raise ValueError(f"Invalid df_gpu_latest_results payload: {path}")
+    return dict(data)
 
 
 def _artifact_nonnegative_int(value: Any, *, field: str, context: str) -> int:
@@ -2218,11 +2274,242 @@ def _surface_code_qasm_text_from_circuit(
     return _surface_code_qasm_text_from_basis_circuit(qc_basis)
 
 
+def _surface_code_cli_name(binary_path: str | Path) -> str:
+    """surface-code CLI の実バイナリ名を返す。"""
+    name = Path(binary_path).expanduser().resolve().name.lower()
+    if name == "qret":
+        return "qret"
+    return "qcsf"
+
+
+def _surface_code_opt_pipeline_yaml(
+    *,
+    ir_path: str | Path,
+    opt_path: str | Path,
+    cli_name: str,
+    passes: Sequence[str] | None = None,
+) -> str:
+    """CLI 差分を吸収した opt pipeline YAML を返す。"""
+    entry_key = "function" if str(cli_name) == "qret" else "circuit"
+    effective_passes = list(passes) if passes is not None else _surface_code_opt_passes()
+    return "\n".join(
+        [
+            f"input: {ir_path}",
+            f"{entry_key}: main",
+            f"output: {opt_path}",
+            "pass:",
+            *[f"- {name}" for name in effective_passes],
+            "",
+        ]
+    )
+
+
+def _surface_code_run_opt_logged(
+    *,
+    qcsf_path: str | Path,
+    runtime_root: Path,
+    ir_path: str | Path,
+    opt_path: str | Path,
+    cli_name: str,
+    source: str,
+    ham_name: str,
+    pf_label: PFLabel,
+    target_error: float,
+    rotation_precision: float,
+) -> Dict[str, Any]:
+    """qret/qcsf opt を実行し、必要なら pass ごとの timing を保存する。"""
+    opt_passes = list(_surface_code_opt_passes())
+    timings_path = runtime_root / "opt_pass_timings.json"
+    combined_opt_yaml = runtime_root / "opt.yaml"
+    combined_opt_yaml.write_text(
+        _surface_code_opt_pipeline_yaml(
+            ir_path=ir_path,
+            opt_path=opt_path,
+            cli_name=cli_name,
+            passes=opt_passes,
+        ),
+        encoding="utf-8",
+    )
+    if not SURFACE_CODE_OPT_TRACE_PASSES or len(opt_passes) <= 1:
+        elapsed = _run_surface_code_command_logged(
+            [
+                str(qcsf_path),
+                "opt",
+                "--pipeline",
+                str(combined_opt_yaml),
+                "--verbose",
+            ],
+            runtime_root=runtime_root,
+            source=source,
+            ham_name=ham_name,
+            pf_label=pf_label,
+            target_error=target_error,
+            stage_name=f"{cli_name} opt",
+            rotation_precision=rotation_precision,
+        )
+        summary = {
+            "trace_mode": "combined",
+            "total_elapsed_seconds": float(elapsed),
+            "passes": [
+                {
+                    "index": 0,
+                    "pass_name": ",".join(opt_passes),
+                    "input_path": str(Path(ir_path)),
+                    "output_path": str(Path(opt_path)),
+                    "elapsed_seconds": float(elapsed),
+                }
+            ],
+        }
+        with timings_path.open("w", encoding="utf-8") as f:
+            json.dump(summary, f, ensure_ascii=True, indent=2)
+        return summary
+
+    total_started = time.perf_counter()
+    pass_timings: List[Dict[str, Any]] = []
+    current_input = Path(ir_path)
+    def _write_pass_summary(current_running: Dict[str, Any] | None) -> None:
+        with timings_path.open("w", encoding="utf-8") as f:
+            json.dump(
+                {
+                    "trace_mode": "per_pass",
+                    "total_elapsed_seconds": float(time.perf_counter() - total_started),
+                    "current_running": current_running,
+                    "passes": pass_timings,
+                },
+                f,
+                ensure_ascii=True,
+                indent=2,
+            )
+
+    for index, pass_name in enumerate(opt_passes):
+        is_last = index == len(opt_passes) - 1
+        pass_output = Path(opt_path) if is_last else runtime_root / f"step_opt_pass_{index:02d}.json"
+        pass_yaml = runtime_root / f"opt_pass_{index:02d}.yaml"
+        pass_yaml.write_text(
+            _surface_code_opt_pipeline_yaml(
+                ir_path=current_input,
+                opt_path=pass_output,
+                cli_name=cli_name,
+                passes=[pass_name],
+            ),
+            encoding="utf-8",
+        )
+        _write_pass_summary(
+            {
+                "index": int(index),
+                "pass_name": str(pass_name),
+                "input_path": str(current_input),
+                "output_path": str(pass_output),
+            }
+        )
+        elapsed = _run_surface_code_command_logged(
+            [
+                str(qcsf_path),
+                "opt",
+                "--pipeline",
+                str(pass_yaml),
+                "--verbose",
+            ],
+            runtime_root=runtime_root,
+            source=source,
+            ham_name=ham_name,
+            pf_label=pf_label,
+            target_error=target_error,
+            stage_name=f"{cli_name} opt pass {index + 1}/{len(opt_passes)} {pass_name}",
+            rotation_precision=rotation_precision,
+        )
+        pass_timings.append(
+            {
+                "index": int(index),
+                "pass_name": str(pass_name),
+                "input_path": str(current_input),
+                "output_path": str(pass_output),
+                "elapsed_seconds": float(elapsed),
+            }
+        )
+        _write_pass_summary(None)
+        current_input = pass_output
+
+    summary = {
+        "trace_mode": "per_pass",
+        "total_elapsed_seconds": float(time.perf_counter() - total_started),
+        "current_running": None,
+        "passes": pass_timings,
+    }
+    with timings_path.open("w", encoding="utf-8") as f:
+        json.dump(summary, f, ensure_ascii=True, indent=2)
+    _surface_code_log(
+        f"saved opt pass timings -> {timings_path.name}",
+        source=source,
+        ham_name=ham_name,
+        pf_label=pf_label,
+        target_error=target_error,
+    )
+    return summary
+
+
+def _surface_code_compile_pipeline_yaml(
+    *,
+    opt_path: str | Path,
+    compile_output_path: str | Path,
+    compile_info_path: str | Path,
+    topology_path: str | Path,
+    cli_name: str,
+) -> str:
+    """CLI 差分を吸収した compile pipeline YAML を返す。"""
+    if str(cli_name) == "qret":
+        return "\n".join(
+            [
+                "source: IR",
+                f"input: {opt_path}",
+                "function: main",
+                "target: SC_LS_FIXED_V0",
+                f"output: {compile_output_path}",
+                f"sc_ls_fixed_v0_topology: {topology_path}",
+                f"sc_ls_fixed_v0_machine_type: {SURFACE_CODE_MACHINE_TYPE}",
+                f"sc_ls_fixed_v0_magic_generation_period: {int(SURFACE_CODE_MAGIC_GENERATION_PERIOD)}",
+                f"sc_ls_fixed_v0_maximum_magic_state_stock: {int(SURFACE_CODE_MAX_MAGIC_STATE_STOCK)}",
+                f"sc_ls_fixed_v0_entanglement_generation_period: {int(SURFACE_CODE_ENTANGLEMENT_GENERATION_PERIOD)}",
+                f"sc_ls_fixed_v0_maximum_entangled_state_stock: {int(SURFACE_CODE_MAX_ENTANGLED_STATE_STOCK)}",
+                f"sc_ls_fixed_v0_reaction_time: {int(SURFACE_CODE_REACTION_TIME)}",
+                f"sc_ls_fixed_v0_dump_compile_info_to_json: {compile_info_path}",
+                "sc_ls_fixed_v0_pass:",
+                "  - sc_ls_fixed_v0::init_compile_info",
+                "  - sc_ls_fixed_v0::calc_info_without_topology",
+                "  - sc_ls_fixed_v0::dump_compile_info",
+                "",
+            ]
+        )
+    return "\n".join(
+        [
+            "source: IR",
+            f"input: {opt_path}",
+            "circuit: main",
+            "target: FTQC",
+            f"output: {compile_output_path}",
+            f"ftqc_topology: {topology_path}",
+            f"ftqc_machine_type: {SURFACE_CODE_MACHINE_TYPE}",
+            f"ftqc_magic_generation_period: {int(SURFACE_CODE_MAGIC_GENERATION_PERIOD)}",
+            f"ftqc_maximum_magic_state_stock: {int(SURFACE_CODE_MAX_MAGIC_STATE_STOCK)}",
+            f"ftqc_entanglement_generation_period: {int(SURFACE_CODE_ENTANGLEMENT_GENERATION_PERIOD)}",
+            f"ftqc_maximum_entangled_state_stock: {int(SURFACE_CODE_MAX_ENTANGLED_STATE_STOCK)}",
+            f"ftqc_reaction_time: {int(SURFACE_CODE_REACTION_TIME)}",
+            f"ftqc_dump_compile_info_to_json: {compile_info_path}",
+            "ftqc_pass:",
+            "  - ftqc::init_compile_info",
+            "  - ftqc::calc_info_without_topology",
+            "  - ftqc::dump_compile_info",
+            "",
+        ]
+    )
+
+
 def _surface_code_chunk_qasm_paths(
     qc_basis: Any,
     *,
     runtime_root: Path,
     max_ops: int,
+    cli_name: str,
 ) -> List[Dict[str, Any]]:
     """basis gate 回路を連続チャンクへ分割し、各 chunk の QASM を保存する。"""
     if int(max_ops) <= 0:
@@ -2255,15 +2542,10 @@ def _surface_code_chunk_qasm_paths(
             encoding="utf-8",
         )
         opt_yaml.write_text(
-            "\n".join(
-                [
-                    f"input: {ir_path}",
-                    "circuit: main",
-                    f"output: {opt_path}",
-                    "pass:",
-                    *[f"- {name}" for name in _surface_code_opt_passes()],
-                    "",
-                ]
+            _surface_code_opt_pipeline_yaml(
+                ir_path=ir_path,
+                opt_path=opt_path,
+                cli_name=cli_name,
             ),
             encoding="utf-8",
         )
@@ -2333,8 +2615,9 @@ def _run_surface_code_command(
         or "GLIBC_" in details
         or "GLIBCXX_" in details
     ):
+        cli_name = _surface_code_cli_name(binary_path)
         raise RuntimeError(
-            "surface_code qcsf binary is not runnable on this machine. "
+            f"surface_code {cli_name} binary is not runnable on this machine. "
             f"Binary: {binary_path}. "
             f"Added {binary_path.parent} to LD_LIBRARY_PATH automatically, "
             "but the remaining loader error indicates that either "
@@ -2362,7 +2645,7 @@ def _run_surface_code_command_logged(
     target_error: float,
     stage_name: str,
     rotation_precision: float | None = None,
-) -> None:
+) -> float:
     """surface_code CLI を実行し、開始/完了と経過時間をログ出力する。"""
     _surface_code_log(
         f"running {stage_name}",
@@ -2385,6 +2668,7 @@ def _run_surface_code_command_logged(
         pf_label=pf_label,
         target_error=target_error,
     )
+    return float(elapsed)
 
 
 def _ensure_surface_code_binary_usable(
@@ -2393,7 +2677,7 @@ def _ensure_surface_code_binary_usable(
     runtime_root: Path,
     rotation_precision: float | None = None,
 ) -> None:
-    """qcsf 実行バイナリがこの環境で起動可能か事前確認する。"""
+    """surface-code 実行バイナリがこの環境で起動可能か事前確認する。"""
     _run_surface_code_command(
         [str(qcsf_path), "--help"],
         runtime_root=runtime_root,
@@ -2456,10 +2740,12 @@ def _surface_code_chunked_decompose_only_step_metrics(
 ) -> Dict[str, Any]:
     """巨大回路を chunk に分割して decompose-only 指標を集計する。"""
     max_ops = int(SURFACE_CODE_DECOMPOSE_CHUNK_MAX_OPS)
+    cli_name = _surface_code_cli_name(qcsf_path)
     chunk_specs = _surface_code_chunk_qasm_paths(
         qc_basis,
         runtime_root=runtime_root,
         max_ops=max_ops,
+        cli_name=cli_name,
     )
     if not chunk_specs:
         raise ValueError("No chunk generated for decompose-only surface-code run.")
@@ -2555,7 +2841,7 @@ def _generate_surface_code_step_metrics(
     target_error: float,
     use_original: bool = False,
 ) -> Dict[str, Any]:
-    """Qiskit -> OpenQASM2 -> qcsf の流れで step metrics を生成する。"""
+    """Qiskit -> OpenQASM2 -> surface-code CLI の流れで step metrics を生成する。"""
     _surface_code_log(
         "auto-generate start",
         source=source,
@@ -2621,7 +2907,7 @@ def _generate_surface_code_step_metrics(
     )
     runtime_root.mkdir(parents=True, exist_ok=True)
     _surface_code_log(
-        "checking qcsf binary",
+        "checking surface_code binary",
         source=source,
         ham_name=ham_name,
         pf_label=pf_label,
@@ -2634,7 +2920,7 @@ def _generate_surface_code_step_metrics(
         rotation_precision=rotation_precision,
     )
     _surface_code_log(
-        f"qcsf binary ok ({time.perf_counter() - t0:.1f}s)",
+        f"surface_code binary ok ({time.perf_counter() - t0:.1f}s)",
         source=source,
         ham_name=ham_name,
         pf_label=pf_label,
@@ -2723,24 +3009,14 @@ def _generate_surface_code_step_metrics(
     qasm_path = runtime_root / "step.qasm"
     ir_path = runtime_root / "step_ir.json"
     opt_path = runtime_root / "step_opt.json"
-    asm_path = runtime_root / "step.asm"
-    compile_info_path = runtime_root / "compile_info.json"
-    opt_yaml = runtime_root / "opt.yaml"
-
-    qasm_path.write_text(qasm_text, encoding="utf-8")
-    opt_yaml.write_text(
-        "\n".join(
-            [
-                f"input: {ir_path}",
-                "circuit: main",
-                f"output: {opt_path}",
-                "pass:",
-                *[f"- {name}" for name in _surface_code_opt_passes()],
-                "",
-            ]
-        ),
-        encoding="utf-8",
+    cli_name = _surface_code_cli_name(qcsf_path)
+    compile_output_path = (
+        runtime_root / "step_sc_ls_fixed_v0.json"
+        if cli_name == "qret"
+        else runtime_root / "step.asm"
     )
+    compile_info_path = runtime_root / "compile_info.json"
+    qasm_path.write_text(qasm_text, encoding="utf-8")
 
     _run_surface_code_command_logged(
         [
@@ -2759,24 +3035,20 @@ def _generate_surface_code_step_metrics(
         ham_name=ham_name,
         pf_label=pf_label,
         target_error=target_error,
-        stage_name="qcsf parse",
+        stage_name=f"{cli_name} parse",
         rotation_precision=rotation_precision,
     )
-    _run_surface_code_command_logged(
-        [
-            str(qcsf_path),
-            "opt",
-            "--pipeline",
-            str(opt_yaml),
-            "--verbose",
-        ],
+    _surface_code_run_opt_logged(
+        qcsf_path=qcsf_path,
         runtime_root=runtime_root,
+        ir_path=ir_path,
+        opt_path=opt_path,
+        cli_name=cli_name,
         source=source,
         ham_name=ham_name,
         pf_label=pf_label,
         target_error=target_error,
-        stage_name="qcsf opt",
-        rotation_precision=rotation_precision,
+        rotation_precision=float(rotation_precision),
     )
     if SURFACE_CODE_COMPILE_MODE == "decompose_only":
         _surface_code_log(
@@ -2801,27 +3073,12 @@ def _generate_surface_code_step_metrics(
         raise FileNotFoundError(f"surface_code topology file not found: {topology_path}")
     compile_yaml = runtime_root / "compile.yaml"
     compile_yaml.write_text(
-        "\n".join(
-            [
-                "source: IR",
-                f"input: {opt_path}",
-                "circuit: main",
-                "target: FTQC",
-                f"output: {asm_path}",
-                f"ftqc_topology: {topology_path}",
-                f"ftqc_machine_type: {SURFACE_CODE_MACHINE_TYPE}",
-                f"ftqc_magic_generation_period: {int(SURFACE_CODE_MAGIC_GENERATION_PERIOD)}",
-                f"ftqc_maximum_magic_state_stock: {int(SURFACE_CODE_MAX_MAGIC_STATE_STOCK)}",
-                f"ftqc_entanglement_generation_period: {int(SURFACE_CODE_ENTANGLEMENT_GENERATION_PERIOD)}",
-                f"ftqc_maximum_entangled_state_stock: {int(SURFACE_CODE_MAX_ENTANGLED_STATE_STOCK)}",
-                f"ftqc_reaction_time: {int(SURFACE_CODE_REACTION_TIME)}",
-                f"ftqc_dump_compile_info_to_json: {compile_info_path}",
-                "ftqc_pass:",
-                "  - ftqc::init_compile_info",
-                "  - ftqc::calc_info_without_topology",
-                "  - ftqc::dump_compile_info",
-                "",
-            ]
+        _surface_code_compile_pipeline_yaml(
+            opt_path=opt_path,
+            compile_output_path=compile_output_path,
+            compile_info_path=compile_info_path,
+            topology_path=topology_path,
+            cli_name=cli_name,
         ),
         encoding="utf-8",
     )
@@ -2838,7 +3095,7 @@ def _generate_surface_code_step_metrics(
         ham_name=ham_name,
         pf_label=pf_label,
         target_error=target_error,
-        stage_name="qcsf compile",
+        stage_name=f"{cli_name} compile",
         rotation_precision=rotation_precision,
     )
 
@@ -2846,7 +3103,7 @@ def _generate_surface_code_step_metrics(
     metrics["target_error"] = float(target_error)
     metrics["step_time"] = float(step_time)
     metrics["cache_key"] = _surface_code_cache_key(float(target_error))
-    metrics["generator"] = "auto_qcsf"
+    metrics["generator"] = f"auto_{cli_name}"
     metrics["auto_generated"] = True
     metrics["source"] = str(source)
     metrics["compile_mode"] = SURFACE_CODE_COMPILE_MODE
@@ -3910,6 +4167,175 @@ def _artifact_positive_scalar(value: Any, *, field: str, context: str) -> float:
     return scalar
 
 
+def _optional_positive_float(value: Any) -> float | None:
+    """正の float なら返し、それ以外は None を返す。"""
+    if value is None:
+        return None
+    try:
+        scalar = float(value)
+    except (TypeError, ValueError):
+        return None
+    if (not np.isfinite(scalar)) or scalar <= 0:
+        return None
+    return float(scalar)
+
+
+def _optional_nonnegative_float(value: Any) -> float | None:
+    """0 以上の float なら返し、それ以外は None を返す。"""
+    if value is None:
+        return None
+    try:
+        scalar = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not np.isfinite(scalar):
+        return None
+    if scalar < 0:
+        return None
+    return float(scalar)
+
+
+def _optional_positive_int(value: Any) -> int | None:
+    """正の int なら返し、それ以外は None を返す。"""
+    if value is None:
+        return None
+    try:
+        scalar = int(value)
+    except (TypeError, ValueError):
+        return None
+    if scalar <= 0:
+        return None
+    return int(scalar)
+
+
+def _load_df_compare_alpha_and_exponent_from_latest(
+    ham_name: str,
+    pf_label: PFLabel,
+    *,
+    use_original: bool = False,
+) -> tuple[float, float]:
+    """DF 比較用の (alpha, p) を df_gpu_latest_results 優先で返す。"""
+    del use_original  # DF latest artifacts ignore grouped-original toggle.
+
+    context = f"{ham_name}_Operator_{pf_label}[df_gpu_latest_results]"
+    fixed_p = float(P_DIR[normalize_pf_label(pf_label)])
+    try:
+        payload = _load_df_gpu_latest_payload(ham_name, pf_label)
+    except (FileNotFoundError, ValueError):
+        return _load_compare_alpha_and_exponent(ham_name, pf_label, source="df")
+
+    fit_raw = payload.get("fit")
+    if isinstance(fit_raw, Mapping):
+        try:
+            alpha = _artifact_positive_scalar(
+                fit_raw.get("avg_coeff"),
+                field="fit.avg_coeff",
+                context=context,
+            )
+            return alpha, fixed_p
+        except ValueError:
+            pass
+        try:
+            alpha = _artifact_positive_scalar(
+                fit_raw.get("coeff"),
+                field="fit.coeff",
+                context=context,
+            )
+            expo = _artifact_positive_scalar(
+                fit_raw.get("exponent"),
+                field="fit.exponent",
+                context=context,
+            )
+            return alpha, expo
+        except ValueError:
+            pass
+
+    return _load_compare_alpha_and_exponent(ham_name, pf_label, source="df")
+
+
+def _compute_df_gpu_latest_rz_layers_from_hamiltonian(
+    ham_name: str,
+    pf_label: PFLabel,
+    *,
+    payload: Mapping[str, Any] | None = None,
+) -> Dict[str, Any]:
+    """DF Hamiltonian から 1-step 回路コストを再構築して rz layer 指標を補完する。"""
+    from scripts.df_trotter_energy_plot import df_trotter_ud_rz_layer_counts
+
+    payload_map = (
+        dict(payload)
+        if isinstance(payload, Mapping)
+        else _load_df_gpu_latest_payload(ham_name, pf_label)
+    )
+    info_raw = payload_map.get("info")
+    info = info_raw if isinstance(info_raw, Mapping) else {}
+    rz_layers_raw = payload_map.get("rz_layers")
+
+    time_value = None
+    if isinstance(rz_layers_raw, Mapping):
+        time_value = _optional_positive_float(rz_layers_raw.get("time"))
+    if time_value is None:
+        time_value = _optional_positive_float(info.get("rz_layer_time"))
+    if time_value is None:
+        time_value = _optional_positive_float(info.get("t_start"))
+
+    rank_value = _optional_positive_int(info.get("rank"))
+    rank_fraction_value = None
+    if rank_value is None:
+        rank_fraction_value = _optional_positive_float(info.get("rank_fraction"))
+
+    tol_value = _optional_nonnegative_float(info.get("tol"))
+    metrics = df_trotter_ud_rz_layer_counts(
+        molecule_type=_parse_molecule_type_from_ham_name(ham_name),
+        pf_label=normalize_pf_label(pf_label),
+        time=time_value,
+        rank=rank_value,
+        rank_fraction=rank_fraction_value,
+        tol=tol_value,
+        distance=_parse_distance_from_ham_name(ham_name),
+        basis=DEFAULT_BASIS,
+        save_rz_layers=False,
+    )
+    if not isinstance(metrics, Mapping):
+        raise ValueError(
+            "Invalid rz-layer recompute result for "
+            f"{ham_name}_Operator_{pf_label}: {type(metrics)!r}"
+        )
+    return dict(metrics)
+
+
+def _load_df_compare_rz_layer_value_from_latest(
+    ham_name: str,
+    pf_label: PFLabel,
+    *,
+    preferred_key: str | None = None,
+) -> tuple[str, float]:
+    """DF 比較用の rz layer 値を df_gpu_latest_results 優先で返す。"""
+    payload: Dict[str, Any] | None = None
+    try:
+        payload = _load_df_gpu_latest_payload(ham_name, pf_label)
+    except (FileNotFoundError, ValueError):
+        payload = None
+
+    rz_layers_raw = payload.get("rz_layers") if isinstance(payload, Mapping) else None
+    should_recompute = not isinstance(rz_layers_raw, Mapping)
+    if isinstance(rz_layers_raw, Mapping) and preferred_key is not None:
+        should_recompute = preferred_key not in rz_layers_raw
+    if not should_recompute and isinstance(rz_layers_raw, Mapping):
+        try:
+            return _pick_df_rz_layer_value(rz_layers_raw, preferred_key=preferred_key)
+        except ValueError:
+            should_recompute = True
+
+    if should_recompute:
+        rz_layers_raw = _compute_df_gpu_latest_rz_layers_from_hamiltonian(
+            ham_name,
+            pf_label,
+            payload=payload,
+        )
+    return _pick_df_rz_layer_value(rz_layers_raw, preferred_key=preferred_key)
+
+
 def _load_alpha_from_ave(
     ham_name: str,
     pf_label: PFLabel,
@@ -4034,6 +4460,119 @@ def _qpe_iteration_factor(alpha: float, p: float, epsilon_e: float) -> float:
     )
 
 
+def error_coefficient_compare_gr_df(
+    Hchain: HChainSpec,
+    n_w_list: Sequence[PFLabel],
+    *,
+    use_original: bool = False,
+) -> Dict[str, Dict[str, List[float]]]:
+    """Grouped と DF の誤差係数 alpha を同一プロットで比較する。
+
+    GR は grouped artifact、DF は df_gpu_latest_results 優先で読む。
+    戻り値は既存比較関数と同じく ``{"pf|src": {"x": [...], "y": [...]}}`` 形式。
+    """
+    chain_list = _normalize_compare_hchain_spec(Hchain)
+    mol_labels = [f"H{i}" for i in chain_list]
+    num_qubits = [2 * i for i in chain_list]
+    series: DefaultDict[str, Dict[str, List[float]]] = defaultdict(
+        lambda: {"x": [], "y": []}
+    )
+
+    for qubits, mol in zip(num_qubits, mol_labels):
+        if qubits % 4 == 0:
+            ham_name = mol + "_sto-3g_singlet_distance_100_charge_0_grouping"
+        else:
+            ham_name = mol + "_sto-3g_triplet_1+_distance_100_charge_1_grouping"
+
+        for n_w in n_w_list:
+            if n_w == "10th(Morales)" and qubits == 30:
+                continue
+
+            grouped_key = f"{n_w}|gr"
+            grouped_name = f"{ham_name}_Operator_{n_w}"
+            try:
+                alpha_gr, _expo_gr = _load_compare_alpha_and_exponent(
+                    ham_name,
+                    n_w,
+                    source="gr",
+                    use_original=use_original,
+                )
+                series[grouped_key]["x"].append(float(qubits))
+                series[grouped_key]["y"].append(float(alpha_gr))
+            except Exception as exc:
+                print(f"[alpha-compare][skip gr] {grouped_name}: {exc}")
+
+            df_key = f"{n_w}|df"
+            df_name = f"{ham_name}_Operator_{n_w}"
+            try:
+                alpha_df, _expo_df = _load_df_compare_alpha_and_exponent_from_latest(
+                    ham_name,
+                    n_w,
+                    use_original=use_original,
+                )
+                series[df_key]["x"].append(float(qubits))
+                series[df_key]["y"].append(float(alpha_df))
+            except Exception as exc:
+                print(f"[alpha-compare][skip df] {df_name}: {exc}")
+
+    has_data = any(len(d["x"]) > 0 for d in series.values())
+    if not has_data:
+        raise FileNotFoundError(
+            "No valid grouped/df artifacts found for error_coefficient_compare_gr_df."
+        )
+
+    _fig, ax = plt.subplots(figsize=(8, 6), dpi=200)
+    set_loglog_axes(ax)
+
+    for key, data in series.items():
+        x = np.asarray(data["x"], dtype=float)
+        y = np.asarray(data["y"], dtype=float)
+        if x.size == 0:
+            continue
+        order = np.argsort(x)
+        x = x[order]
+        y = y[order]
+        pf, source = key.split("|", 1)
+        label = f"{label_replace(pf)} ({source})"
+        if source == "gr":
+            ax.plot(
+                x,
+                y,
+                marker=MARKER_MAP.get(pf, "o"),
+                linestyle="-",
+                color=COLOR_MAP.get(pf, None),
+                label=label,
+            )
+        else:
+            ax.plot(
+                x,
+                y,
+                marker="x",
+                linestyle="--",
+                color=COLOR_MAP.get(pf, None),
+                label=label,
+            )
+
+    x_min = float(min(num_qubits))
+    x_max = float(max(num_qubits))
+    if x_max <= x_min:
+        x_min *= 0.95
+        x_max *= 1.05
+    ax.set_xlim(x_min, x_max)
+    ax.set_xlabel("Num qubits", fontsize=15)
+    ax.set_ylabel("Error coefficient", fontsize=15)
+    ax.grid(True, which="minor", axis="y", linestyle=":", linewidth=0.5, alpha=0.35)
+    ax.grid(True, which="major", axis="y", linestyle="-", linewidth=0.8, alpha=0.6)
+
+    handles, labels = ax.get_legend_handles_labels()
+    handles_u, labels_u = unique_legend_entries(handles, labels)
+    if handles_u:
+        ax.legend(handles_u, labels_u, loc="upper left", framealpha=0.9)
+    plt.tight_layout()
+    plt.show()
+    return {k: {"x": list(v["x"]), "y": list(v["y"])} for k, v in series.items()}
+
+
 def qpe_iteration_factor_compare_gr_df(
     Hchain: int,
     n_w_list: Sequence[PFLabel],
@@ -4092,10 +4631,9 @@ def qpe_iteration_factor_compare_gr_df(
             df_key = f"{n_w}|df"
             df_name = f"{ham_name}_Operator_{n_w}"
             try:
-                alpha_df = _load_alpha_from_ave(
+                alpha_df, _expo_df = _load_df_compare_alpha_and_exponent_from_latest(
                     ham_name,
                     n_w,
-                    source="df",
                     use_original=use_original,
                 )
                 val_df = _qpe_iteration_factor(
@@ -4336,29 +4874,20 @@ def t_depth_extrapolation_df(
     plt.show()
 
 
-def t_depth_extrapolation_compare_gr_df(
-    Hchain: int,
+def _compare_gr_df_series(
+    Hchain: HChainSpec,
     n_w_list: Sequence[PFLabel],
+    *,
     rz_layer: Optional[bool] = None,
     rz_layer_key: str | None = None,
     use_original: bool = False,
-) -> None:
-    """Grouped と DF の t_depth~/rz_layer を同一プロットで比較する。
-
-    Default:
-      alpha は *_ave から、p は固定の P_DIR[pf_label] を使う。
-      DF の rz layer は total_nonclifford_z_coloring_depth を優先して選ぶ。
-    Fallback:
-      *_ave が無い場合は従来読込に戻る（df は legacy expo を使用）。
-    """
-    if Hchain < 3:
-        raise ValueError("Hchain must be >= 3 for gr/df comparison.")
-
-    target_error = TARGET_ERROR
-    chain_list = [i for i in range(3, Hchain + 1)]
+    target_error: float = TARGET_ERROR,
+    error_on_missing: bool = False,
+) -> Dict[str, Dict[str, List[float]]]:
+    """Grouped/DF 比較用の系列を構築する。"""
+    chain_list = _normalize_compare_hchain_spec(Hchain)
     mol_labels = [f"H{i}" for i in chain_list]
     num_qubits = [2 * i for i in chain_list]
-
     series: DefaultDict[str, Dict[str, List[float]]] = defaultdict(
         lambda: {"x": [], "y": []}
     )
@@ -4378,7 +4907,6 @@ def t_depth_extrapolation_compare_gr_df(
             if n_w == "10th(Morales)" and qubits == 30:
                 continue
 
-            # grouped source
             grouped_key = f"{n_w}|gr"
             grouped_path = f"{ham_name}_Operator_{n_w}_ave"
             try:
@@ -4408,24 +4936,24 @@ def t_depth_extrapolation_compare_gr_df(
                     series[grouped_key]["x"].append(float(qubits))
                     series[grouped_key]["y"].append(float(total_gr))
             except Exception as exc:
+                if error_on_missing:
+                    raise
                 print(f"[compare][skip grouped] {grouped_path}: {exc}")
 
-            # df source
             df_key = f"{n_w}|df"
             df_path = f"{ham_name}_Operator_{n_w}_ave"
             try:
-                coeff_df, expo_df = _load_compare_alpha_and_exponent(
+                coeff_df, expo_df = _load_df_compare_alpha_and_exponent_from_latest(
                     ham_name,
                     n_w,
-                    source="df",
                     use_original=use_original,
                 )
-                payload = _load_df_artifact_payload(ham_name, n_w)
-                rz_layers_raw = payload.get("rz_layers")
-                if not isinstance(rz_layers_raw, Mapping):
-                    raise ValueError("missing rz_layers")
-                _metric_key, rz_layer_value = _pick_df_rz_layer_value(
-                    rz_layers_raw, preferred_key=effective_rz_layer_key
+                _metric_key, rz_layer_value = (
+                    _load_df_compare_rz_layer_value_from_latest(
+                        ham_name,
+                        n_w,
+                        preferred_key=effective_rz_layer_key,
+                    )
                 )
                 N_0_df = rz_layer_value
                 pf_layer_rz_df = rz_layer_value
@@ -4447,7 +4975,41 @@ def t_depth_extrapolation_compare_gr_df(
                     series[df_key]["x"].append(float(qubits))
                     series[df_key]["y"].append(float(total_df))
             except Exception as exc:
+                if error_on_missing:
+                    raise
                 print(f"[compare][skip df] {df_path}: {exc}")
+
+    return {k: {"x": list(v["x"]), "y": list(v["y"])} for k, v in series.items()}
+
+
+def t_depth_extrapolation_compare_gr_df(
+    Hchain: HChainSpec,
+    n_w_list: Sequence[PFLabel],
+    rz_layer: Optional[bool] = None,
+    rz_layer_key: str | None = None,
+    use_original: bool = False,
+) -> None:
+    """Grouped と DF の t_depth~/rz_layer を同一プロットで比較する。
+
+    Default:
+      alpha は *_ave から、p は固定の P_DIR[pf_label] を使う。
+      DF の rz layer は total_nonclifford_z_coloring_depth を優先して選ぶ。
+      DF 側の scaling / rz_layers は df_gpu_latest_results を優先して読む。
+    Fallback:
+      DF 側 rz_layers が無い場合は DF Hamiltonian から 1-step 回路を再構築し、
+      実行せずにレイヤー数を再計数する。
+    """
+    series = _compare_gr_df_series(
+        Hchain,
+        n_w_list,
+        rz_layer=rz_layer,
+        rz_layer_key=rz_layer_key,
+        use_original=use_original,
+    )
+    if not series:
+        raise FileNotFoundError("No valid grouped/df series found for comparison.")
+
+    num_qubits = [2 * chain for chain in _normalize_compare_hchain_spec(Hchain)]
 
     ax = plt.gca()
     set_loglog_axes(ax)
@@ -4501,6 +5063,140 @@ def t_depth_extrapolation_compare_gr_df(
         ax.legend(handles_u, labels_u, loc="upper left", framealpha=0.9)
     plt.tight_layout()
     plt.show()
+
+
+def t_depth_extrapolation_compare_gr_df_extrapolated(
+    Hchain: HChainSpec,
+    n_w_list: Sequence[PFLabel],
+    *,
+    rz_layer: Optional[bool] = None,
+    rz_layer_key: str | None = None,
+    use_original: bool = False,
+    MIN_POS: float = 1e-18,
+    X_MIN_CALC: float = 4.0,
+    X_MAX_DISPLAY: float = 100.0,
+) -> Dict[str, Any]:
+    """Grouped/DF 比較系列を 100 qubits まで外挿し、差分は数値で返す。
+
+    Hchain は従来通りの最大 chain 長 `int` に加え、`range` や明示リストでも指定できる。
+    """
+    series = _compare_gr_df_series(
+        Hchain,
+        n_w_list,
+        rz_layer=rz_layer,
+        rz_layer_key=rz_layer_key,
+        use_original=use_original,
+    )
+    if not series:
+        raise FileNotFoundError("No valid grouped/df series found for extrapolation.")
+
+    plt.figure(figsize=(8, 6), dpi=200)
+    ax = plt.gca()
+
+    all_x: List[float] = []
+    fit_params: Dict[str, Dict[str, float]] = {}
+    extrapolated_at_100: Dict[str, Dict[str, float]] = defaultdict(dict)
+
+    for key, data in series.items():
+        x = np.asarray(data["x"], dtype=float)
+        y = np.asarray(data["y"], dtype=float)
+        if x.size == 0:
+            continue
+        order = np.argsort(x)
+        x = x[order]
+        y = y[order]
+        all_x.extend(x.tolist())
+
+        pf, source = key.split("|", 1)
+        label = f"{label_replace(pf)} ({source})"
+        line_style = "-" if source == "gr" else "--"
+        marker = MARKER_MAP.get(pf, "o") if source == "gr" else "x"
+        color = COLOR_MAP.get(pf, None)
+        ax.plot(
+            x,
+            y,
+            marker=marker,
+            linestyle="None",
+            color=color,
+            label=label,
+        )
+
+        mask = (x > 0) & (y > 0)
+        if mask.sum() < 2:
+            continue
+        fit = loglog_fit(x[mask], y[mask], mask_nonpositive=True, compute_r2=True)
+        fit_params[key] = {
+            "coeff": float(fit.coeff),
+            "slope": float(fit.slope),
+            "r2": float(fit.r2) if fit.r2 is not None else float("nan"),
+        }
+        extrapolated_at_100[pf][source] = float(fit.coeff * (100.0 ** fit.slope))
+
+        xfit_lo = max(X_MIN_CALC, float(np.min(x[mask])))
+        if X_MAX_DISPLAY > xfit_lo:
+            xx = np.logspace(np.log10(xfit_lo), np.log10(X_MAX_DISPLAY), 400)
+            ax.plot(
+                xx,
+                fit.coeff * xx ** fit.slope,
+                line_style,
+                color=color,
+                lw=1.0,
+                alpha=0.85,
+            )
+
+    if not all_x:
+        raise FileNotFoundError("No valid x-values found for grouped/df extrapolation.")
+
+    set_loglog_axes(ax)
+    x_min = float(min(all_x))
+    ax.set_xlim(x_min, float(X_MAX_DISPLAY))
+    ax.set_xlabel("Num qubits", fontsize=15)
+    if rz_layer:
+        ax.set_ylabel("Num RZ layer", fontsize=15)
+    else:
+        ax.set_ylabel("T-depth", fontsize=15)
+    ax.grid(True, which="minor", axis="y", linestyle=":", linewidth=0.5, alpha=0.35)
+    ax.grid(True, which="major", axis="y", linestyle="-", linewidth=0.8, alpha=0.6)
+
+    diff_at_100: Dict[str, Dict[str, float]] = {}
+    for pf in n_w_list:
+        key_gr = f"{pf}|gr"
+        key_df = f"{pf}|df"
+        if key_gr not in fit_params or key_df not in fit_params:
+            continue
+        fit_gr = fit_params[key_gr]
+        fit_df = fit_params[key_df]
+        gr_at_100 = float(extrapolated_at_100.get(str(pf), {}).get("gr"))
+        df_at_100 = float(extrapolated_at_100.get(str(pf), {}).get("df"))
+        signed_diff = gr_at_100 - df_at_100
+        abs_diff = abs(signed_diff)
+        diff_at_100[str(pf)] = {
+            "gr_at_100": gr_at_100,
+            "df_at_100": df_at_100,
+            "signed_gr_minus_df_at_100": float(signed_diff),
+            "abs_diff_at_100": float(abs_diff),
+        }
+        quantity_label = "RZ_layer" if rz_layer else "Tdepth"
+        print(f"{label_replace(str(pf))}_gr_{quantity_label}_at_100qubits = {gr_at_100}")
+        print(f"{label_replace(str(pf))}_df_{quantity_label}_at_100qubits = {df_at_100}")
+        print(
+            f"{label_replace(str(pf))}_delta_gr_minus_df_{quantity_label}_at_100qubits = "
+            f"{signed_diff}"
+        )
+
+    handles1, labels1 = ax.get_legend_handles_labels()
+    handles_u, labels_u = unique_legend_entries(handles1, labels1)
+    if handles_u:
+        ax.legend(handles_u, labels_u, loc="upper left", framealpha=0.9)
+    plt.tight_layout()
+    plt.show()
+
+    return {
+        "series": series,
+        "fits": fit_params,
+        "at_100": dict(extrapolated_at_100),
+        "differences_at_100": diff_at_100,
+    }
 
 
 def _conventional_t_depth_series(

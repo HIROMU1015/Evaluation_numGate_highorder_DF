@@ -1,0 +1,48 @@
+[job] start=2026-04-21T18:29:17+0900
+[job] ham_name=H4_sto-3g_singlet_distance_100_charge_0_grouping
+[job] pf_label=2nd
+[job] source=gr
+[job] target_error=1.5936001019904001e-04
+[job] compile_mode=ftqc_compile
+[surface-code][gr] H4_sto-3g_singlet_distance_100_charge_0_grouping_Operator_2nd ftqc_compile:rot_layer_linear_floor_eta_1.000e-02_floor_1.000e-05:eps_1.593600101990e-04: auto-generate start
+[surface-code][gr] H4_sto-3g_singlet_distance_100_charge_0_grouping_Operator_2nd ftqc_compile:rot_layer_linear_floor_eta_1.000e-02_floor_1.000e-05:eps_1.593600101990e-04: computed step_time=2.048259e-01
+[surface-code][gr] H4_sto-3g_singlet_distance_100_charge_0_grouping_Operator_2nd ftqc_compile:rot_layer_linear_floor_eta_1.000e-02_floor_1.000e-05:eps_1.593600101990e-04: rotation_precision=1.000000e-05 mode=layer_linear_floor
+[surface-code][gr] H4_sto-3g_singlet_distance_100_charge_0_grouping_Operator_2nd ftqc_compile:rot_layer_linear_floor_eta_1.000e-02_floor_1.000e-05:eps_1.593600101990e-04: checking surface_code binary
+[surface-code][gr] H4_sto-3g_singlet_distance_100_charge_0_grouping_Operator_2nd ftqc_compile:rot_layer_linear_floor_eta_1.000e-02_floor_1.000e-05:eps_1.593600101990e-04: surface_code binary ok (0.0s)
+[surface-code][gr] H4_sto-3g_singlet_distance_100_charge_0_grouping_Operator_2nd ftqc_compile:rot_layer_linear_floor_eta_1.000e-02_floor_1.000e-05:eps_1.593600101990e-04: building gr step circuit
+sum of all grouped terms == original Hamiltonian?
+diffinision0
+True
+validation of the group:
+[surface-code][gr] H4_sto-3g_singlet_distance_100_charge_0_grouping_Operator_2nd ftqc_compile:rot_layer_linear_floor_eta_1.000e-02_floor_1.000e-05:eps_1.593600101990e-04: built gr step circuit (0.6s)
+[surface-code][gr] H4_sto-3g_singlet_distance_100_charge_0_grouping_Operator_2nd ftqc_compile:rot_layer_linear_floor_eta_1.000e-02_floor_1.000e-05:eps_1.593600101990e-04: building basis-gate circuit
+[surface-code][gr] H4_sto-3g_singlet_distance_100_charge_0_grouping_Operator_2nd ftqc_compile:rot_layer_linear_floor_eta_1.000e-02_floor_1.000e-05:eps_1.593600101990e-04: built basis-gate circuit (0.5s)
+[surface-code][gr] H4_sto-3g_singlet_distance_100_charge_0_grouping_Operator_2nd ftqc_compile:rot_layer_linear_floor_eta_1.000e-02_floor_1.000e-05:eps_1.593600101990e-04: exporting OpenQASM2
+[surface-code][gr] H4_sto-3g_singlet_distance_100_charge_0_grouping_Operator_2nd ftqc_compile:rot_layer_linear_floor_eta_1.000e-02_floor_1.000e-05:eps_1.593600101990e-04: exported OpenQASM2 (0.0s)
+[surface-code][gr] H4_sto-3g_singlet_distance_100_charge_0_grouping_Operator_2nd ftqc_compile:rot_layer_linear_floor_eta_1.000e-02_floor_1.000e-05:eps_1.593600101990e-04: running qret parse
+[surface-code][gr] H4_sto-3g_singlet_distance_100_charge_0_grouping_Operator_2nd ftqc_compile:rot_layer_linear_floor_eta_1.000e-02_floor_1.000e-05:eps_1.593600101990e-04: finished qret parse (0.1s)
+[surface-code][gr] H4_sto-3g_singlet_distance_100_charge_0_grouping_Operator_2nd ftqc_compile:rot_layer_linear_floor_eta_1.000e-02_floor_1.000e-05:eps_1.593600101990e-04: running qret opt pass 1/6 ir::recursive_inliner
+[surface-code][gr] H4_sto-3g_singlet_distance_100_charge_0_grouping_Operator_2nd ftqc_compile:rot_layer_linear_floor_eta_1.000e-02_floor_1.000e-05:eps_1.593600101990e-04: finished qret opt pass 1/6 ir::recursive_inliner (13.0s)
+[surface-code][gr] H4_sto-3g_singlet_distance_100_charge_0_grouping_Operator_2nd ftqc_compile:rot_layer_linear_floor_eta_1.000e-02_floor_1.000e-05:eps_1.593600101990e-04: running qret opt pass 2/6 ir::static_condition_pruning
+[surface-code][gr] H4_sto-3g_singlet_distance_100_charge_0_grouping_Operator_2nd ftqc_compile:rot_layer_linear_floor_eta_1.000e-02_floor_1.000e-05:eps_1.593600101990e-04: finished qret opt pass 2/6 ir::static_condition_pruning (0.1s)
+[surface-code][gr] H4_sto-3g_singlet_distance_100_charge_0_grouping_Operator_2nd ftqc_compile:rot_layer_linear_floor_eta_1.000e-02_floor_1.000e-05:eps_1.593600101990e-04: running qret opt pass 3/6 ir::decompose_inst
+[surface-code][gr] H4_sto-3g_singlet_distance_100_charge_0_grouping_Operator_2nd ftqc_compile:rot_layer_linear_floor_eta_1.000e-02_floor_1.000e-05:eps_1.593600101990e-04: finished qret opt pass 3/6 ir::decompose_inst (314.5s)
+[surface-code][gr] H4_sto-3g_singlet_distance_100_charge_0_grouping_Operator_2nd ftqc_compile:rot_layer_linear_floor_eta_1.000e-02_floor_1.000e-05:eps_1.593600101990e-04: running qret opt pass 4/6 ir::ignore_global_phase
+[surface-code][gr] H4_sto-3g_singlet_distance_100_charge_0_grouping_Operator_2nd ftqc_compile:rot_layer_linear_floor_eta_1.000e-02_floor_1.000e-05:eps_1.593600101990e-04: finished qret opt pass 4/6 ir::ignore_global_phase (0.2s)
+[surface-code][gr] H4_sto-3g_singlet_distance_100_charge_0_grouping_Operator_2nd ftqc_compile:rot_layer_linear_floor_eta_1.000e-02_floor_1.000e-05:eps_1.593600101990e-04: running qret opt pass 5/6 ir::delete_consecutive_same_pauli
+[surface-code][gr] H4_sto-3g_singlet_distance_100_charge_0_grouping_Operator_2nd ftqc_compile:rot_layer_linear_floor_eta_1.000e-02_floor_1.000e-05:eps_1.593600101990e-04: finished qret opt pass 5/6 ir::delete_consecutive_same_pauli (0.2s)
+[surface-code][gr] H4_sto-3g_singlet_distance_100_charge_0_grouping_Operator_2nd ftqc_compile:rot_layer_linear_floor_eta_1.000e-02_floor_1.000e-05:eps_1.593600101990e-04: running qret opt pass 6/6 ir::delete_opt_hint
+[surface-code][gr] H4_sto-3g_singlet_distance_100_charge_0_grouping_Operator_2nd ftqc_compile:rot_layer_linear_floor_eta_1.000e-02_floor_1.000e-05:eps_1.593600101990e-04: finished qret opt pass 6/6 ir::delete_opt_hint (0.2s)
+[surface-code][gr] H4_sto-3g_singlet_distance_100_charge_0_grouping_Operator_2nd ftqc_compile:rot_layer_linear_floor_eta_1.000e-02_floor_1.000e-05:eps_1.593600101990e-04: saved opt pass timings -> opt_pass_timings.json
+[surface-code][gr] H4_sto-3g_singlet_distance_100_charge_0_grouping_Operator_2nd ftqc_compile:rot_layer_linear_floor_eta_1.000e-02_floor_1.000e-05:eps_1.593600101990e-04: running qret compile
+[surface-code][gr] H4_sto-3g_singlet_distance_100_charge_0_grouping_Operator_2nd ftqc_compile:rot_layer_linear_floor_eta_1.000e-02_floor_1.000e-05:eps_1.593600101990e-04: finished qret compile (1.5s)
+[surface-code][gr] H4_sto-3g_singlet_distance_100_charge_0_grouping_Operator_2nd ftqc_compile:rot_layer_linear_floor_eta_1.000e-02_floor_1.000e-05:eps_1.593600101990e-04: auto-generate done
+[python] done
+[python] generator=auto_qret
+[python] compile_mode=ftqc_compile
+[python] magic_state_consumption_count=35720
+[python] magic_state_consumption_depth=26902
+[python] qubit_volume=0
+[python] runtime_without_topology=148607
+[job] end=2026-04-21T18:34:48+0900
+[job] elapsed_seconds=331.1

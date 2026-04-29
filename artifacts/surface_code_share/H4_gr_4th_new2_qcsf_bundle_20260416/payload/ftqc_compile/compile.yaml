@@ -1,0 +1,17 @@
+source: IR
+input: ../parse_and_opt/step_opt.json
+circuit: main
+target: FTQC
+output: step.asm
+ftqc_topology: tutorial_topology.yaml
+ftqc_machine_type: Dim2
+ftqc_magic_generation_period: 15
+ftqc_maximum_magic_state_stock: 10000
+ftqc_entanglement_generation_period: 100
+ftqc_maximum_entangled_state_stock: 10
+ftqc_reaction_time: 1
+ftqc_dump_compile_info_to_json: compile_info.json
+ftqc_pass:
+  - ftqc::init_compile_info
+  - ftqc::calc_info_without_topology
+  - ftqc::dump_compile_info

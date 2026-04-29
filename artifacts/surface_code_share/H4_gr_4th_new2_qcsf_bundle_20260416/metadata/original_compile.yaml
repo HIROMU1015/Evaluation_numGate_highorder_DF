@@ -1,0 +1,17 @@
+source: IR
+input: /home/abe/Project/Evaluation_numGate_DF/artifacts/surface_code_cache/gr/lightweight/H4_sto-3g_singlet_distance_100_charge_0_grouping__4th_new_2_/lightweight_rot_layer_linear_floor_eta_1.000e-02_floor_1.000e-05_eps_1.593600101990e-04/step_opt.json
+circuit: main
+target: FTQC
+output: /home/abe/Project/Evaluation_numGate_DF/artifacts/surface_code_cache/gr/lightweight/H4_sto-3g_singlet_distance_100_charge_0_grouping__4th_new_2_/lightweight_rot_layer_linear_floor_eta_1.000e-02_floor_1.000e-05_eps_1.593600101990e-04/step.asm
+ftqc_topology: /home/abe/Project/Evaluation_numGate_DF/surface_code/demo_linux_macos/demo_linux/input/topology/tutorial.yaml
+ftqc_machine_type: Dim2
+ftqc_magic_generation_period: 15
+ftqc_maximum_magic_state_stock: 10000
+ftqc_entanglement_generation_period: 100
+ftqc_maximum_entangled_state_stock: 10
+ftqc_reaction_time: 1
+ftqc_dump_compile_info_to_json: /home/abe/Project/Evaluation_numGate_DF/artifacts/surface_code_cache/gr/lightweight/H4_sto-3g_singlet_distance_100_charge_0_grouping__4th_new_2_/lightweight_rot_layer_linear_floor_eta_1.000e-02_floor_1.000e-05_eps_1.593600101990e-04/compile_info.json
+ftqc_pass:
+  - ftqc::init_compile_info
+  - ftqc::calc_info_without_topology
+  - ftqc::dump_compile_info

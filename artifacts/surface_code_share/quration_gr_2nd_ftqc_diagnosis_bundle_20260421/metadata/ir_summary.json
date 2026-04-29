@@ -1,0 +1,390 @@
+{
+  "cases": {
+    "H3": {
+      "step_ir.json": {
+        "size_bytes": 229822,
+        "circuit_count": 2,
+        "instruction_total": 3631,
+        "top_opcodes": [
+          [
+            "Call",
+            1232
+          ],
+          [
+            "RZ",
+            1014
+          ],
+          [
+            "CX",
+            596
+          ],
+          [
+            "Z",
+            560
+          ],
+          [
+            "S",
+            224
+          ],
+          [
+            "Return",
+            2
+          ],
+          [
+            "SDag",
+            2
+          ],
+          [
+            "H",
+            1
+          ]
+        ]
+      },
+      "step_opt_pass_00.json": {
+        "size_bytes": 196557,
+        "circuit_count": 2,
+        "instruction_total": 6095,
+        "top_opcodes": [
+          [
+            "SDag",
+            2466
+          ],
+          [
+            "H",
+            1233
+          ],
+          [
+            "RZ",
+            1014
+          ],
+          [
+            "CX",
+            596
+          ],
+          [
+            "Z",
+            560
+          ],
+          [
+            "S",
+            224
+          ],
+          [
+            "Return",
+            2
+          ]
+        ]
+      },
+      "step_opt_pass_01.json": {
+        "size_bytes": 196557,
+        "circuit_count": 2,
+        "instruction_total": 6095,
+        "top_opcodes": [
+          [
+            "SDag",
+            2466
+          ],
+          [
+            "H",
+            1233
+          ],
+          [
+            "RZ",
+            1014
+          ],
+          [
+            "CX",
+            596
+          ],
+          [
+            "Z",
+            560
+          ],
+          [
+            "S",
+            224
+          ],
+          [
+            "Return",
+            2
+          ]
+        ]
+      },
+      "step_opt_pass_02.json": {
+        "size_bytes": 982971,
+        "circuit_count": 2,
+        "instruction_total": 37493,
+        "top_opcodes": [
+          [
+            "H",
+            12035
+          ],
+          [
+            "T",
+            10708
+          ],
+          [
+            "S",
+            7868
+          ],
+          [
+            "GlobalPhase",
+            3198
+          ],
+          [
+            "SDag",
+            2466
+          ],
+          [
+            "CX",
+            596
+          ],
+          [
+            "Z",
+            560
+          ],
+          [
+            "X",
+            60
+          ],
+          [
+            "Return",
+            2
+          ]
+        ]
+      },
+      "step_opt.json": {
+        "size_bytes": 733527,
+        "circuit_count": 2,
+        "instruction_total": 34295,
+        "top_opcodes": [
+          [
+            "H",
+            12035
+          ],
+          [
+            "T",
+            10708
+          ],
+          [
+            "S",
+            7868
+          ],
+          [
+            "SDag",
+            2466
+          ],
+          [
+            "CX",
+            596
+          ],
+          [
+            "Z",
+            560
+          ],
+          [
+            "X",
+            60
+          ],
+          [
+            "Return",
+            2
+          ]
+        ]
+      }
+    },
+    "H4": {
+      "step_ir.json": {
+        "size_bytes": 1056598,
+        "circuit_count": 2,
+        "instruction_total": 16497,
+        "top_opcodes": [
+          [
+            "Call",
+            5816
+          ],
+          [
+            "RZ",
+            4640
+          ],
+          [
+            "Z",
+            2624
+          ],
+          [
+            "CX",
+            2336
+          ],
+          [
+            "S",
+            1076
+          ],
+          [
+            "Return",
+            2
+          ],
+          [
+            "SDag",
+            2
+          ],
+          [
+            "H",
+            1
+          ]
+        ]
+      },
+      "step_opt_pass_00.json": {
+        "size_bytes": 899565,
+        "circuit_count": 2,
+        "instruction_total": 28129,
+        "top_opcodes": [
+          [
+            "SDag",
+            11634
+          ],
+          [
+            "H",
+            5817
+          ],
+          [
+            "RZ",
+            4640
+          ],
+          [
+            "Z",
+            2624
+          ],
+          [
+            "CX",
+            2336
+          ],
+          [
+            "S",
+            1076
+          ],
+          [
+            "Return",
+            2
+          ]
+        ]
+      },
+      "step_opt_pass_01.json": {
+        "size_bytes": 899565,
+        "circuit_count": 2,
+        "instruction_total": 28129,
+        "top_opcodes": [
+          [
+            "SDag",
+            11634
+          ],
+          [
+            "H",
+            5817
+          ],
+          [
+            "RZ",
+            4640
+          ],
+          [
+            "Z",
+            2624
+          ],
+          [
+            "CX",
+            2336
+          ],
+          [
+            "S",
+            1076
+          ],
+          [
+            "Return",
+            2
+          ]
+        ]
+      },
+      "step_opt_pass_02.json": {
+        "size_bytes": 3780273,
+        "circuit_count": 2,
+        "instruction_total": 138541,
+        "top_opcodes": [
+          [
+            "H",
+            41837
+          ],
+          [
+            "T",
+            35720
+          ],
+          [
+            "S",
+            29920
+          ],
+          [
+            "GlobalPhase",
+            14288
+          ],
+          [
+            "SDag",
+            11634
+          ],
+          [
+            "Z",
+            2624
+          ],
+          [
+            "CX",
+            2336
+          ],
+          [
+            "X",
+            180
+          ],
+          [
+            "Return",
+            2
+          ]
+        ]
+      },
+      "step_opt.json": {
+        "size_bytes": 2665809,
+        "circuit_count": 2,
+        "instruction_total": 124253,
+        "top_opcodes": [
+          [
+            "H",
+            41837
+          ],
+          [
+            "T",
+            35720
+          ],
+          [
+            "S",
+            29920
+          ],
+          [
+            "SDag",
+            11634
+          ],
+          [
+            "Z",
+            2624
+          ],
+          [
+            "CX",
+            2336
+          ],
+          [
+            "X",
+            180
+          ],
+          [
+            "Return",
+            2
+          ]
+        ]
+      }
+    }
+  }
+}

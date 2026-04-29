@@ -1,0 +1,8 @@
+input: /home/abe/Project/Evaluation_numGate_DF/artifacts/surface_code_cache/gr/decompose_only/H4_sto-3g_singlet_distance_100_charge_0_grouping__4th_new_2_/decompose_only_rot_layer_linear_floor_eta_1.000e-02_floor_1.000e-05_eps_1.593600101990e-04/step_ir.json
+circuit: main
+output: /home/abe/Project/Evaluation_numGate_DF/artifacts/surface_code_cache/gr/decompose_only/H4_sto-3g_singlet_distance_100_charge_0_grouping__4th_new_2_/decompose_only_rot_layer_linear_floor_eta_1.000e-02_floor_1.000e-05_eps_1.593600101990e-04/step_opt.json
+pass:
+- ir::decompose_inst
+- ir::ignore_global_phase
+- ir::delete_consecutive_same_pauli
+- ir::delete_opt_hint

@@ -1,0 +1,5 @@
+input: step_ir.json
+function: main
+output: step_opt_pass_00.json
+pass:
+- ir::recursive_inliner

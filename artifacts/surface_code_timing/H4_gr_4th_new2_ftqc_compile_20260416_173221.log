@@ -1,0 +1,4 @@
+  File "<string>", line 1
+    import importlib, time, traceback; from trotterlib import cost_extrapolation as ce; print(f"[job] start={time.strftime("%Y-%m-%dT%H:%M:%S%z")}", flush=True); start=time.time(); importlib.reload(ce); ce.SURFACE_CODE_COMPILE_MODE="ftqc_compile"; 
+                                                                                                                            ^
+SyntaxError: f-string: unmatched '('

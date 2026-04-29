@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import hashlib
 import itertools
+import json
 import pickle
 from pathlib import Path
 from time import perf_counter
-from typing import Any, Callable, Iterable, Sequence
+from typing import Any, Callable, Iterable, Mapping, Sequence
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -79,6 +81,14 @@ from trotterlib.qiskit_time_evolution_utils import (
 )
 from trotterlib.pf_decomposition import iter_pf_steps
 from trotterlib.product_formula import _get_w_list
+
+
+_H_CHAIN_INTEGRALS_CACHE: dict[tuple[int, float, str], tuple[float, np.ndarray, np.ndarray]] = {}
+
+
+def clear_df_integral_session_cache() -> None:
+    """Clear the in-process DF integral cache used to stabilize repeated calls."""
+    _H_CHAIN_INTEGRALS_CACHE.clear()
 
 
 def _one_body_fermion_op(coeff_mat: np.ndarray) -> FermionOperator:
@@ -1247,6 +1257,15 @@ def _h_chain_integrals(
         distance = DEFAULT_DISTANCE
     if basis is None:
         basis = DEFAULT_BASIS
+    cache_key = (int(molecule_type), float(distance), str(basis))
+    cached = _H_CHAIN_INTEGRALS_CACHE.get(cache_key)
+    if cached is not None:
+        constant, one_body, two_body = cached
+        return (
+            float(constant),
+            np.array(one_body, copy=True),
+            np.array(two_body, copy=True),
+        )
     geometry, multiplicity, charge = geo(molecule_type, distance)
     description = f"distance_{int(distance * 100)}_charge_{charge}"
     molecule = MolecularData(
@@ -1255,7 +1274,10 @@ def _h_chain_integrals(
     molecule = run_pyscf(molecule, run_scf=1, run_fci=0)
     one_body, two_body = molecule.get_integrals()
     constant = float(molecule.nuclear_repulsion)
-    return constant, one_body, two_body
+    one_body_arr = np.array(one_body, copy=True)
+    two_body_arr = np.array(two_body, copy=True)
+    _H_CHAIN_INTEGRALS_CACHE[cache_key] = (constant, one_body_arr, two_body_arr)
+    return float(constant), np.array(one_body_arr, copy=True), np.array(two_body_arr, copy=True)
 
 
 def _h_chain_integrals_pyscf(
@@ -1290,6 +1312,7 @@ def df_ground_state_physical_sector(
     """Compute DF ground state in the physical electron sector via matvec-only solver."""
     total_start = perf_counter()
     profile_data: dict[str, float] = {}
+    used_config_rank_fraction = False
 
     if rank is not None and rank_fraction is not None:
         raise ValueError("rank and rank_fraction are mutually exclusive.")
@@ -1298,6 +1321,7 @@ def df_ground_state_physical_sector(
         config_rank_fraction = get_df_rank_fraction_for_molecule(int(molecule_type))
         if config_rank_fraction is not None:
             rank_fraction = float(config_rank_fraction)
+            used_config_rank_fraction = True
             if debug:
                 debug_print(
                     "rank_fraction from config: "
@@ -1325,6 +1349,11 @@ def df_ground_state_physical_sector(
             rank = int(round(full_rank * rank_fraction))
             rank = max(1, min(rank, full_rank))
 
+    artifact_ccsd_target_error_ha = (
+        _config_df_target_error_ha(int(molecule_type))
+        if used_config_rank_fraction
+        else None
+    )
     artifact_name = _df_sector_ground_state_artifact_name(
         molecule_type=int(molecule_type),
         distance=distance,
@@ -1332,6 +1361,18 @@ def df_ground_state_physical_sector(
         rank=rank,
         rank_fraction=rank_fraction,
         tol=tol,
+        ccsd_target_error_ha=artifact_ccsd_target_error_ha,
+    )
+    hamiltonian_fingerprint = _df_ground_state_hamiltonian_fingerprint(
+        molecule_type=int(molecule_type),
+        constant=float(constant),
+        one_body=np.asarray(one_body),
+        two_body=np.asarray(two_body),
+        rank=rank,
+        rank_fraction=rank_fraction,
+        tol=tol,
+        distance=distance,
+        basis=basis,
     )
     if load_artifact and not compare_with_sparse_eigsh:
         t0 = perf_counter()
@@ -1339,20 +1380,26 @@ def df_ground_state_physical_sector(
         load_elapsed = perf_counter() - t0
         if cached_ground_state is not None:
             energy_cached, state_cached, info_cached = cached_ground_state
-            info_cached["artifact_name"] = artifact_name
-            info_cached["loaded_from_artifact"] = True
-            if profile:
-                info_cached["profile"] = {
-                    "build_integrals_s": profile_data["build_integrals_s"],
-                    "load_artifact_s": load_elapsed,
-                    "total_s": perf_counter() - total_start,
-                }
+            if info_cached.get("hamiltonian_fingerprint") == hamiltonian_fingerprint:
+                info_cached["artifact_name"] = artifact_name
+                info_cached["loaded_from_artifact"] = True
+                if profile:
+                    info_cached["profile"] = {
+                        "build_integrals_s": profile_data["build_integrals_s"],
+                        "load_artifact_s": load_elapsed,
+                        "total_s": perf_counter() - total_start,
+                    }
+                if debug:
+                    debug_print(
+                        "df_ground_state_physical_sector loaded artifact: "
+                        f"{artifact_name}"
+                    )
+                return energy_cached, state_cached, info_cached
             if debug:
                 debug_print(
-                    "df_ground_state_physical_sector loaded artifact: "
-                    f"{artifact_name}"
+                    "df_ground_state_physical_sector ignored artifact due to "
+                    f"Hamiltonian fingerprint mismatch: {artifact_name}"
                 )
-            return energy_cached, state_cached, info_cached
 
     t0 = perf_counter()
     two_body = _symmetrize_two_body(two_body)
@@ -1487,6 +1534,7 @@ def df_ground_state_physical_sector(
     info["rank"] = int(rank) if rank is not None else None
     info["rank_fraction"] = float(rank_fraction) if rank_fraction is not None else None
     info["artifact_name"] = artifact_name
+    info["hamiltonian_fingerprint"] = hamiltonian_fingerprint
     profile_data.update(
         {f"sector_builder.{key}": value for key, value in build_profile.items()}
     )
@@ -1775,11 +1823,66 @@ def _load_df_rz_layer_artifact(file_name: str) -> dict[str, object] | None:
     return None
 
 
+def _load_df_latest_rz_layer_metrics(
+    *,
+    ham_name: str,
+    pf_label: PFLabel,
+) -> dict[str, object] | None:
+    from trotterlib.cost_extrapolation import (
+        _compute_df_gpu_latest_rz_layers_from_hamiltonian,
+        _load_df_gpu_latest_payload,
+    )
+
+    try:
+        payload = _load_df_gpu_latest_payload(ham_name, pf_label)
+    except (FileNotFoundError, ValueError):
+        return None
+
+    rz_layers_raw = payload.get("rz_layers")
+    if isinstance(rz_layers_raw, Mapping):
+        metrics = dict(rz_layers_raw)
+    else:
+        metrics = _compute_df_gpu_latest_rz_layers_from_hamiltonian(
+            ham_name,
+            pf_label,
+            payload=payload,
+        )
+
+    if not isinstance(metrics, dict):
+        metrics = dict(metrics)
+
+    info_raw = payload.get("info")
+    if isinstance(info_raw, Mapping) and "num_qubits" not in metrics and info_raw.get("num_qubits") is not None:
+        metrics["num_qubits"] = info_raw.get("num_qubits")
+    return metrics
+
+
+_DF_GROUND_STATE_ARTIFACT_VERSION = 2
+_DF_GROUND_STATE_STATE_LAYOUT = "restricted_state@basis_indices:full_jw_interleaved_v2"
+
+
 def _artifact_float_token(value: float) -> str:
     token = format(float(value), ".12g")
     token = token.replace("-", "m").replace("+", "")
     token = token.replace(".", "p")
     return token
+
+
+def _artifact_target_error_token(value: float) -> str:
+    token = format(float(value), ".1e")
+    token = token.replace("-", "m").replace("+", "")
+    token = token.replace(".", "p")
+    return token
+
+
+def _config_df_target_error_ha(molecule_type: int) -> float | None:
+    selection = get_df_rank_selection_for_molecule(int(molecule_type))
+    if not isinstance(selection, dict):
+        return None
+    target_error_ha = selection.get("target_error_ha")
+    if target_error_ha is None:
+        return None
+    return float(target_error_ha)
 
 
 def _df_sector_ground_state_artifact_name(
@@ -1790,6 +1893,7 @@ def _df_sector_ground_state_artifact_name(
     rank: int | None,
     rank_fraction: float | None,
     tol: float | None,
+    ccsd_target_error_ha: float | None = None,
 ) -> str:
     parts = [
         _artifact_ham_name(molecule_type, distance=distance, basis=basis),
@@ -1801,11 +1905,21 @@ def _df_sector_ground_state_artifact_name(
         parts.append(f"rankfrac_{_artifact_float_token(rank_fraction)}")
     if tol is not None:
         parts.append(f"tol_{_artifact_float_token(tol)}")
+    if ccsd_target_error_ha is not None:
+        parts.append(f"ccsd_target_{_artifact_target_error_token(ccsd_target_error_ha)}ha")
     return "_".join(parts)
 
 
 def _save_df_ground_state_artifact(file_name: str, data: dict[str, object]) -> None:
     payload = dict(data)
+    payload["artifact_version"] = int(_DF_GROUND_STATE_ARTIFACT_VERSION)
+    payload["state_layout"] = _DF_GROUND_STATE_STATE_LAYOUT
+    info_payload = payload.get("info")
+    if isinstance(info_payload, dict):
+        info_copy = dict(info_payload)
+        info_copy["artifact_version"] = int(_DF_GROUND_STATE_ARTIFACT_VERSION)
+        info_copy["state_layout"] = _DF_GROUND_STATE_STATE_LAYOUT
+        payload["info"] = info_copy
     state = payload.get("state")
     basis_indices = payload.get("basis_indices")
     if state is not None and basis_indices is not None:
@@ -1826,6 +1940,39 @@ def _save_df_ground_state_artifact(file_name: str, data: dict[str, object]) -> N
         pickle.dump(payload, f)
 
 
+def _array_sha256(arr: np.ndarray) -> str:
+    array = np.ascontiguousarray(np.asarray(arr))
+    return hashlib.sha256(array.view(np.uint8)).hexdigest()
+
+
+def _df_ground_state_hamiltonian_fingerprint(
+    *,
+    molecule_type: int,
+    constant: float,
+    one_body: np.ndarray,
+    two_body: np.ndarray,
+    rank: int | None,
+    rank_fraction: float | None,
+    tol: float | None,
+    distance: float | None,
+    basis: str | None,
+) -> str:
+    payload = {
+        "molecule_type": int(molecule_type),
+        "distance": float(DEFAULT_DISTANCE if distance is None else distance),
+        "basis": str(DEFAULT_BASIS if basis is None else basis),
+        "rank": int(rank) if rank is not None else None,
+        "rank_fraction": float(rank_fraction) if rank_fraction is not None else None,
+        "tol": float(tol) if tol is not None else None,
+        "constant": float(np.real_if_close(constant)),
+        "one_body_sha256": _array_sha256(one_body),
+        "two_body_sha256": _array_sha256(two_body),
+    }
+    return hashlib.sha256(
+        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+
+
 def _load_df_ground_state_artifact(
     file_name: str,
 ) -> tuple[float, np.ndarray, dict[str, object]] | None:
@@ -1836,9 +1983,18 @@ def _load_df_ground_state_artifact(
         data = pickle.load(f)
     if not isinstance(data, dict):
         return None
+    artifact_version = data.get("artifact_version")
+    if artifact_version != int(_DF_GROUND_STATE_ARTIFACT_VERSION):
+        return None
+    if data.get("state_layout") != _DF_GROUND_STATE_STATE_LAYOUT:
+        return None
     energy = data.get("energy")
     info = data.get("info")
     if energy is None or not isinstance(info, dict):
+        return None
+    if info.get("artifact_version") != int(_DF_GROUND_STATE_ARTIFACT_VERSION):
+        return None
+    if info.get("state_layout") != _DF_GROUND_STATE_STATE_LAYOUT:
         return None
     try:
         energy_value = float(np.real_if_close(energy))
@@ -2115,14 +2271,107 @@ def _default_df_time_or_raise(
     *,
     molecule_type: int,
     pf_label: PFLabel,
+    rank: int | None = None,
+    rank_fraction: float | None = None,
+    tol: float | None = None,
+    distance: float | None = None,
+    basis: str | None = None,
+    ground_state_solver_tol: float = 1e-10,
+    ground_state_solver_maxiter: int | None = None,
+    load_ground_state_artifact: bool = True,
+    save_ground_state_artifact: bool = True,
+    debug: bool = False,
+    debug_print: Callable[[str], None] = print,
 ) -> float:
-    t_default = get_default_df_time_for_molecule_pf(
+    # These phase targets are calibrated from the user-provided default time table
+    # and the corresponding default DF-sector ground-state energies. Using the
+    # phase target rather than a fixed time keeps the default time aligned when
+    # the DF reference energy changes with rank/basis/distance.
+    df_phase_target_by_molecule: dict[int, dict[int, float]] = {
+        3: {0: 1.175956900079285, 1: 3.559229550906636},
+        4: {0: 1.481960210005585, 1: 4.485933608665555},
+        5: {0: 1.491743726290449, 1: 4.475231178871347},
+        6: {0: 1.748474215996999, 1: 8.742371079984995},
+        7: {0: 1.617892434680625, 1: 8.370834770738885},
+        8: {0: 1.892858237048301, 1: 9.884926349030017},
+        9: {0: 1.891940451628706, 1: 9.459702258143533},
+        10: {0: 2.06512737024081, 1: 10.325636851204049},
+        11: {0: 2.01085581657814, 1: 10.341544199544719},
+        12: {0: 2.13212874287983, 1: 11.015998504879121},
+        13: {0: 2.198427946346893, 1: 10.992139731734465},
+        14: {0: 2.18122097729342, 1: 11.560471179655124},
+        15: {0: 1.984277891440036, 1: 10.119817246344184},
+    }
+
+    t_static = get_default_df_time_for_molecule_pf(
         int(molecule_type), pf_label
     )
-    if t_default is None:
-        raise ValueError(
-            "Default DF time is not configured for "
-            f"molecule_type={int(molecule_type)}."
+    time_idx = 1 if normalize_pf_label(pf_label) in {"8th(Morales)", "10th(Morales)"} else 0
+    phase_dir = df_phase_target_by_molecule.get(int(molecule_type))
+    phase_target = None if phase_dir is None else phase_dir.get(time_idx)
+
+    # If the molecule has no calibrated phase target, or if the current call
+    # does not have a DF rank setting to reproduce the calibrated reference,
+    # keep the legacy static defaults.
+    if phase_target is None:
+        if t_static is None:
+            raise ValueError(
+                "Default DF time is not configured for "
+                f"molecule_type={int(molecule_type)}."
+            )
+        return float(t_static)
+
+    if rank is None and rank_fraction is None:
+        config_rank_fraction = get_df_rank_fraction_for_molecule(int(molecule_type))
+        if config_rank_fraction is None:
+            if t_static is None:
+                raise ValueError(
+                    "Default DF time is not configured for "
+                    f"molecule_type={int(molecule_type)}."
+                )
+            return float(t_static)
+
+    energy_ref, _state, _info = df_ground_state_physical_sector(
+        molecule_type=int(molecule_type),
+        rank=rank,
+        rank_fraction=rank_fraction,
+        tol=tol,
+        distance=distance,
+        basis=basis,
+        solver="eigsh",
+        solver_tol=ground_state_solver_tol,
+        solver_maxiter=ground_state_solver_maxiter,
+        matrix_free=True,
+        compare_with_sparse_eigsh=False,
+        load_artifact=load_ground_state_artifact,
+        save_artifact=save_ground_state_artifact,
+        debug=False,
+    )
+    energy_abs = abs(float(np.real_if_close(energy_ref)))
+    if not np.isfinite(energy_abs) or energy_abs <= 0.0:
+        if t_static is None:
+            raise ValueError(
+                "DF ground-state energy is not usable for default time selection "
+                f"(molecule_type={int(molecule_type)}, energy_ref={energy_ref!r})."
+            )
+        return float(t_static)
+
+    t_default = round(float(phase_target) / energy_abs, 2)
+    if t_default <= 0.0:
+        if t_static is None:
+            raise ValueError(
+                "Computed default DF time is not positive for "
+                f"molecule_type={int(molecule_type)}."
+            )
+        return float(t_static)
+    if debug:
+        debug_print(
+            "default DF time from ground-state energy: "
+            f"molecule_type={int(molecule_type)} "
+            f"pf_label={normalize_pf_label(pf_label)} "
+            f"|E0|={energy_abs:.12g} "
+            f"phase_target={float(phase_target):.12g} "
+            f"t_start={t_default:.2f}"
         )
     return float(t_default)
 
@@ -2134,17 +2383,219 @@ def _resolve_plot_time_range(
     t_start: float | None,
     t_end: float | None,
     t_step: float | None,
+    rank: int | None = None,
+    rank_fraction: float | None = None,
+    tol: float | None = None,
+    distance: float | None = None,
+    basis: str | None = None,
+    ground_state_solver_tol: float = 1e-10,
+    ground_state_solver_maxiter: int | None = None,
+    load_ground_state_artifact: bool = True,
+    save_ground_state_artifact: bool = True,
+    debug: bool = False,
+    debug_print: Callable[[str], None] = print,
 ) -> tuple[float, float, float]:
     if t_start is None:
         t_start = _default_df_time_or_raise(
             molecule_type=int(molecule_type),
             pf_label=pf_label,
+            rank=rank,
+            rank_fraction=rank_fraction,
+            tol=tol,
+            distance=distance,
+            basis=basis,
+            ground_state_solver_tol=ground_state_solver_tol,
+            ground_state_solver_maxiter=ground_state_solver_maxiter,
+            load_ground_state_artifact=load_ground_state_artifact,
+            save_ground_state_artifact=save_ground_state_artifact,
+            debug=debug,
+            debug_print=debug_print,
         )
     if t_step is None:
         t_step = float(DEFAULT_DF_TIME_STEP)
     if t_end is None:
         t_end = float(t_start + DEFAULT_DF_TIME_WINDOW)
     return float(t_start), float(t_end), float(t_step)
+
+
+def _auto_select_time_range_for_scaling(
+    *,
+    t_start: float,
+    t_end: float,
+    t_step: float,
+    molecule_type: int,
+    pf_label: PFLabel,
+    rank: int | None,
+    rank_fraction: float | None,
+    tol: float | None,
+    distance: float | None,
+    basis: str | None,
+    estimator: str,
+    reference: str,
+    debug_compare_expectation: bool,
+    want_costs: bool,
+    cost_basis_gates: Sequence[str] | None,
+    cost_decompose_reps: int,
+    cost_optimization_level: int,
+    trace_u_debug: bool,
+    ccsd_target_error_ha: float | None,
+    ccsd_thresh_range: Sequence[float] | None,
+    ccsd_use_kernel: bool,
+    ccsd_no_triples: bool,
+    df_sector_solver: str,
+    df_sector_solver_tol: float,
+    df_sector_solver_maxiter: int | None,
+    df_sector_davidson_eps: float,
+    df_sector_davidson_max_subspace: int,
+    df_sector_davidson_max_iterations: int,
+    df_sector_matrix_free: bool,
+    df_sector_ground_state_cache: bool,
+    max_halvings: int = 6,
+    min_r2: float = 0.99,
+    min_error_for_fit: float = 1e-12,
+    debug: bool = False,
+    debug_print: Callable[[str], None] = print,
+) -> tuple[float, float, float, list[float], list[float], dict[str, object] | None, dict[str, object]] | None:
+    target_order = float(pf_order(pf_label))
+    if target_order < 4.0:
+        return None
+
+    window = float(t_end - t_start)
+    current_t_start = float(t_start)
+    tolerance = max(1.0, 0.2 * target_order)
+    best_payload: tuple[
+        float,
+        float,
+        float,
+        list[float],
+        list[float],
+        dict[str, object] | None,
+        dict[str, object],
+    ] | None = None
+    best_score = float("inf")
+    history: list[dict[str, float | bool]] = []
+
+    for _ in range(max_halvings + 1):
+        result = df_trotter_energy_error_curve(
+            current_t_start,
+            current_t_start + window,
+            t_step,
+            molecule_type=molecule_type,
+            pf_label=pf_label,
+            rank=rank,
+            rank_fraction=rank_fraction,
+            tol=tol,
+            distance=distance,
+            basis=basis,
+            estimator=estimator,
+            reference=reference,
+            debug=False,
+            debug_every=1,
+            debug_max=0,
+            debug_print=debug_print,
+            debug_compare_expectation=debug_compare_expectation,
+            return_costs=want_costs,
+            cost_basis_gates=cost_basis_gates,
+            cost_decompose_reps=cost_decompose_reps,
+            cost_optimization_level=cost_optimization_level,
+            trace_u_debug=trace_u_debug,
+            ccsd_target_error_ha=ccsd_target_error_ha,
+            ccsd_thresh_range=ccsd_thresh_range,
+            ccsd_use_kernel=ccsd_use_kernel,
+            ccsd_no_triples=ccsd_no_triples,
+            df_sector_solver=df_sector_solver,
+            df_sector_solver_tol=df_sector_solver_tol,
+            df_sector_solver_maxiter=df_sector_solver_maxiter,
+            df_sector_davidson_eps=df_sector_davidson_eps,
+            df_sector_davidson_max_subspace=df_sector_davidson_max_subspace,
+            df_sector_davidson_max_iterations=df_sector_davidson_max_iterations,
+            df_sector_matrix_free=df_sector_matrix_free,
+            df_sector_ground_state_cache=df_sector_ground_state_cache,
+        )
+        if len(result) == 3:
+            times, errors, costs = result  # type: ignore[misc]
+        else:
+            times, errors = result  # type: ignore[misc]
+            costs = None
+
+        try:
+            fit_result = loglog_fit(times, errors, mask_nonpositive=True, compute_r2=True)
+            slope = float(fit_result.slope)
+            r2 = float(fit_result.r2) if fit_result.r2 is not None else 0.0
+        except ValueError:
+            slope = float("nan")
+            r2 = 0.0
+
+        max_error = max((abs(float(err)) for err in errors), default=0.0)
+        fit_ok = (
+            np.isfinite(slope)
+            and abs(slope - target_order) <= tolerance
+            and r2 >= min_r2
+            and max_error >= min_error_for_fit
+        )
+        score = abs(slope - target_order) if np.isfinite(slope) else float("inf")
+        if r2 < min_r2:
+            score += 10.0
+        if max_error < min_error_for_fit:
+            score += 10.0
+
+        history.append(
+            {
+                "t_start": float(current_t_start),
+                "slope": float(slope) if np.isfinite(slope) else float("nan"),
+                "r2": float(r2),
+                "max_error": float(max_error),
+                "fit_ok": bool(fit_ok),
+            }
+        )
+
+        payload = (
+            float(current_t_start),
+            float(current_t_start + window),
+            float(t_step),
+            list(times),
+            list(errors),
+            costs if isinstance(costs, dict) else None,
+            {
+                "target_order": float(target_order),
+                "selected_t_start": float(current_t_start),
+                "selected_slope": float(slope) if np.isfinite(slope) else float("nan"),
+                "selected_r2": float(r2),
+                "selected_max_error": float(max_error),
+                "history": history.copy(),
+            },
+        )
+        if score < best_score:
+            best_score = score
+            best_payload = payload
+
+        if fit_ok:
+            if debug:
+                debug_print(
+                    "auto-selected DF time range for scaling: "
+                    f"pf_label={pf_label} "
+                    f"t_start={current_t_start:.6g} "
+                    f"slope={slope:.4f} "
+                    f"target={target_order:.1f} "
+                    f"r2={r2:.6f} "
+                    f"max_error={max_error:.3e}"
+                )
+            return payload
+
+        current_t_start = float(current_t_start / 2.0)
+
+    if best_payload is not None and debug:
+        tuning_info = best_payload[-1]
+        debug_print(
+            "auto-selected DF time range fallback: "
+            f"pf_label={pf_label} "
+            f"t_start={float(tuning_info['selected_t_start']):.6g} "
+            f"slope={float(tuning_info['selected_slope']):.4f} "
+            f"target={target_order:.1f} "
+            f"r2={float(tuning_info['selected_r2']):.6f} "
+            f"max_error={float(tuning_info['selected_max_error']):.3e}"
+        )
+    return best_payload
 
 
 def _select_rank_from_ccsd_target(
@@ -3474,8 +3925,10 @@ def df_trotter_energy_error_curve(
     df_sector_davidson_max_subspace: int = 80,
     df_sector_davidson_max_iterations: int = 200,
     df_sector_matrix_free: bool = False,
+    df_sector_ground_state_cache: bool = True,
 ) -> tuple[list[float], list[float]] | tuple[list[float], list[float], dict[str, object]]:
     pf_label = normalize_pf_label(pf_label)
+    used_config_rank_fraction = False
     if t_step <= 0:
         raise ValueError("t_step must be positive.")
     if debug_every <= 0:
@@ -3504,6 +3957,7 @@ def df_trotter_energy_error_curve(
         config_rank_fraction = get_df_rank_fraction_for_molecule(int(molecule_type))
         if config_rank_fraction is not None:
             rank_fraction = float(config_rank_fraction)
+            used_config_rank_fraction = True
             if debug:
                 debug_print(
                     "rank_fraction from config: "
@@ -3579,6 +4033,17 @@ def df_trotter_energy_error_curve(
 
     two_body = _symmetrize_two_body(two_body)
     one_body_spin, two_body_spin = spinorb_from_spatial(one_body, two_body * 0.5)
+    hamiltonian_fingerprint = _df_ground_state_hamiltonian_fingerprint(
+        molecule_type=int(molecule_type),
+        constant=float(constant),
+        one_body=np.asarray(one_body),
+        two_body=np.asarray(two_body),
+        rank=rank,
+        rank_fraction=rank_fraction,
+        tol=tol,
+        distance=distance,
+        basis=basis,
+    )
 
     raw_model = df_decompose_from_integrals(
         one_body, two_body, constant=constant, rank=rank, tol=tol
@@ -3672,6 +4137,15 @@ def df_trotter_energy_error_curve(
                 basis=basis,
                 n_qubits=model.N,
             )
+            artifact_ccsd_target_error_ha = (
+                float(ccsd_target_error_ha)
+                if ccsd_target_error_ha is not None
+                else (
+                    _config_df_target_error_ha(int(molecule_type))
+                    if used_config_rank_fraction
+                    else None
+                )
+            )
             ground_state_artifact_name = _df_sector_ground_state_artifact_name(
                 int(molecule_type),
                 distance=distance,
@@ -3679,6 +4153,7 @@ def df_trotter_energy_error_curve(
                 rank=rank,
                 rank_fraction=rank_fraction,
                 tol=tol,
+                ccsd_target_error_ha=artifact_ccsd_target_error_ha,
             )
             cached_ground_state = (
                 _load_df_ground_state_artifact(ground_state_artifact_name)
@@ -3687,10 +4162,18 @@ def df_trotter_energy_error_curve(
             )
             if cached_ground_state is not None:
                 energy_sector_ref, psi_sector_ref, cached_info = cached_ground_state
-                sector_info.update(cached_info)
-                sector_info["artifact_name"] = ground_state_artifact_name
-                sector_info["loaded_from_artifact"] = True
-            else:
+                if cached_info.get("hamiltonian_fingerprint") == hamiltonian_fingerprint:
+                    sector_info.update(cached_info)
+                    sector_info["artifact_name"] = ground_state_artifact_name
+                    sector_info["loaded_from_artifact"] = True
+                else:
+                    cached_ground_state = None
+                    if debug:
+                        debug_print(
+                            "df_sector reference: ignored ground-state artifact due to "
+                            f"Hamiltonian fingerprint mismatch ({ground_state_artifact_name})"
+                        )
+            if cached_ground_state is None:
                 if df_sector_matrix_free and df_sector_solver == "eigsh":
                     linear_operator, basis_indices, operator_info = _build_df_sector_matrix_free_operator(
                         constant,
@@ -3736,6 +4219,7 @@ def df_trotter_energy_error_curve(
                     )
                 sector_info.update(solve_info)
                 sector_info["artifact_name"] = ground_state_artifact_name
+                sector_info["hamiltonian_fingerprint"] = hamiltonian_fingerprint
                 if df_sector_ground_state_cache:
                     _save_df_ground_state_artifact(
                         ground_state_artifact_name,
@@ -4212,11 +4696,11 @@ def plot_df_u_rz_depth_vs_num_qubits(
         label_total = "DF total_rz_depth"
 
     for molecule_type in sorted({int(m) for m in molecule_types}):
-        artifact_name = (
-            f"{_artifact_ham_name(molecule_type, distance=distance, basis=basis)}"
-            f"_Operator_{pf_label}"
-        )
-        data = _load_df_rz_layer_artifact(artifact_name)
+        ham_name = _artifact_ham_name(molecule_type, distance=distance, basis=basis)
+        artifact_name = f"{ham_name}_Operator_{pf_label}"
+        data = _load_df_latest_rz_layer_metrics(ham_name=ham_name, pf_label=pf_label)
+        if data is None:
+            data = _load_df_rz_layer_artifact(artifact_name)
         if data is None:
             missing.append(int(molecule_type))
             continue
@@ -4342,58 +4826,162 @@ def df_trotter_energy_error_plot(
     artifact_suffix: str = "",
 ) -> tuple[list[float], list[float]] | tuple[list[float], list[float], dict[str, object]]:
     pf_label = normalize_pf_label(pf_label)
+    user_supplied_time_range = any(value is not None for value in (t_start, t_end, t_step))
     t_start, t_end, t_step = _resolve_plot_time_range(
         molecule_type=int(molecule_type),
         pf_label=pf_label,
         t_start=t_start,
         t_end=t_end,
         t_step=t_step,
-    )
-    compute_costs_by_default = bool(save_rz_layers)
-    result = df_trotter_energy_error_curve(
-        t_start,
-        t_end,
-        t_step,
-        molecule_type=molecule_type,
-        pf_label=pf_label,
         rank=rank,
         rank_fraction=rank_fraction,
         tol=tol,
         distance=distance,
         basis=basis,
-        estimator=estimator,
-        reference=reference,
+        ground_state_solver_tol=df_sector_solver_tol,
+        ground_state_solver_maxiter=df_sector_solver_maxiter,
+        load_ground_state_artifact=df_sector_ground_state_cache,
+        save_ground_state_artifact=df_sector_ground_state_cache,
         debug=debug,
-        debug_every=debug_every,
-        debug_max=debug_max,
         debug_print=debug_print,
-        debug_compare_expectation=debug_compare_expectation,
-        return_costs=compute_costs_by_default or report_costs or return_costs,
-        cost_basis_gates=cost_basis_gates,
-        cost_decompose_reps=cost_decompose_reps,
-        cost_optimization_level=cost_optimization_level,
-        trace_u_debug=trace_u_debug,
-        ccsd_target_error_ha=ccsd_target_error_ha,
-        ccsd_thresh_range=ccsd_thresh_range,
-        ccsd_use_kernel=ccsd_use_kernel,
-        ccsd_no_triples=ccsd_no_triples,
-        df_sector_solver=df_sector_solver,
-        df_sector_solver_tol=df_sector_solver_tol,
-        df_sector_solver_maxiter=df_sector_solver_maxiter,
-        df_sector_davidson_eps=df_sector_davidson_eps,
-        df_sector_davidson_max_subspace=df_sector_davidson_max_subspace,
-        df_sector_davidson_max_iterations=df_sector_davidson_max_iterations,
-        df_sector_matrix_free=df_sector_matrix_free,
-        df_sector_ground_state_cache=df_sector_ground_state_cache,
     )
+    compute_costs_by_default = bool(save_rz_layers)
+    want_costs = compute_costs_by_default or report_costs or return_costs
+    result: tuple[list[float], list[float]] | tuple[list[float], list[float], dict[str, object]]
+    auto_time_selection: dict[str, object] | None = None
+    if not user_supplied_time_range:
+        tuned = _auto_select_time_range_for_scaling(
+            t_start=t_start,
+            t_end=t_end,
+            t_step=t_step,
+            molecule_type=molecule_type,
+            pf_label=pf_label,
+            rank=rank,
+            rank_fraction=rank_fraction,
+            tol=tol,
+            distance=distance,
+            basis=basis,
+            estimator=estimator,
+            reference=reference,
+            debug_compare_expectation=debug_compare_expectation,
+            want_costs=want_costs,
+            cost_basis_gates=cost_basis_gates,
+            cost_decompose_reps=cost_decompose_reps,
+            cost_optimization_level=cost_optimization_level,
+            trace_u_debug=trace_u_debug,
+            ccsd_target_error_ha=ccsd_target_error_ha,
+            ccsd_thresh_range=ccsd_thresh_range,
+            ccsd_use_kernel=ccsd_use_kernel,
+            ccsd_no_triples=ccsd_no_triples,
+            df_sector_solver=df_sector_solver,
+            df_sector_solver_tol=df_sector_solver_tol,
+            df_sector_solver_maxiter=df_sector_solver_maxiter,
+            df_sector_davidson_eps=df_sector_davidson_eps,
+            df_sector_davidson_max_subspace=df_sector_davidson_max_subspace,
+            df_sector_davidson_max_iterations=df_sector_davidson_max_iterations,
+            df_sector_matrix_free=df_sector_matrix_free,
+            df_sector_ground_state_cache=df_sector_ground_state_cache,
+            debug=debug,
+            debug_print=debug_print,
+        )
+        if tuned is not None:
+            t_start, t_end, t_step, tuned_times, tuned_errors, tuned_costs, auto_time_selection = tuned
+            if tuned_costs is not None:
+                result = (tuned_times, tuned_errors, tuned_costs)
+            else:
+                result = (tuned_times, tuned_errors)
+        else:
+            result = df_trotter_energy_error_curve(
+                t_start,
+                t_end,
+                t_step,
+                molecule_type=molecule_type,
+                pf_label=pf_label,
+                rank=rank,
+                rank_fraction=rank_fraction,
+                tol=tol,
+                distance=distance,
+                basis=basis,
+                estimator=estimator,
+                reference=reference,
+                debug=debug,
+                debug_every=debug_every,
+                debug_max=debug_max,
+                debug_print=debug_print,
+                debug_compare_expectation=debug_compare_expectation,
+                return_costs=want_costs,
+                cost_basis_gates=cost_basis_gates,
+                cost_decompose_reps=cost_decompose_reps,
+                cost_optimization_level=cost_optimization_level,
+                trace_u_debug=trace_u_debug,
+                ccsd_target_error_ha=ccsd_target_error_ha,
+                ccsd_thresh_range=ccsd_thresh_range,
+                ccsd_use_kernel=ccsd_use_kernel,
+                ccsd_no_triples=ccsd_no_triples,
+                df_sector_solver=df_sector_solver,
+                df_sector_solver_tol=df_sector_solver_tol,
+                df_sector_solver_maxiter=df_sector_solver_maxiter,
+                df_sector_davidson_eps=df_sector_davidson_eps,
+                df_sector_davidson_max_subspace=df_sector_davidson_max_subspace,
+                df_sector_davidson_max_iterations=df_sector_davidson_max_iterations,
+                df_sector_matrix_free=df_sector_matrix_free,
+                df_sector_ground_state_cache=df_sector_ground_state_cache,
+            )
+    else:
+        result = df_trotter_energy_error_curve(
+            t_start,
+            t_end,
+            t_step,
+            molecule_type=molecule_type,
+            pf_label=pf_label,
+            rank=rank,
+            rank_fraction=rank_fraction,
+            tol=tol,
+            distance=distance,
+            basis=basis,
+            estimator=estimator,
+            reference=reference,
+            debug=debug,
+            debug_every=debug_every,
+            debug_max=debug_max,
+            debug_print=debug_print,
+            debug_compare_expectation=debug_compare_expectation,
+            return_costs=want_costs,
+            cost_basis_gates=cost_basis_gates,
+            cost_decompose_reps=cost_decompose_reps,
+            cost_optimization_level=cost_optimization_level,
+            trace_u_debug=trace_u_debug,
+            ccsd_target_error_ha=ccsd_target_error_ha,
+            ccsd_thresh_range=ccsd_thresh_range,
+            ccsd_use_kernel=ccsd_use_kernel,
+            ccsd_no_triples=ccsd_no_triples,
+            df_sector_solver=df_sector_solver,
+            df_sector_solver_tol=df_sector_solver_tol,
+            df_sector_solver_maxiter=df_sector_solver_maxiter,
+            df_sector_davidson_eps=df_sector_davidson_eps,
+            df_sector_davidson_max_subspace=df_sector_davidson_max_subspace,
+            df_sector_davidson_max_iterations=df_sector_davidson_max_iterations,
+            df_sector_matrix_free=df_sector_matrix_free,
+            df_sector_ground_state_cache=df_sector_ground_state_cache,
+        )
     if len(result) == 3:
         times, errors, costs = result  # type: ignore[misc]
     else:
         times, errors = result  # type: ignore[misc]
         costs = None
+    if auto_time_selection is not None and isinstance(costs, dict):
+        costs["auto_time_selection"] = auto_time_selection
 
     fraction_for_legend: float | None = None
     rank_for_legend: tuple[int, int] | None = None
+    config_selection = get_df_rank_selection_for_molecule(int(molecule_type))
+    full_rank_for_legend: int | None = None
+    if isinstance(config_selection, dict):
+        full_rank_cfg = config_selection.get("full_rank")
+        if full_rank_cfg is not None:
+            full_rank_for_legend = int(full_rank_cfg)
+    if full_rank_for_legend is None:
+        full_rank_for_legend = max(1, int(molecule_type) ** 2)
     if isinstance(costs, dict):
         ccsd_sel = costs.get("ccsd_rank_selection")
         if isinstance(ccsd_sel, dict):
@@ -4404,25 +4992,28 @@ def df_trotter_energy_error_plot(
             selected_fraction = ccsd_sel.get("selected_rank_fraction")
             if selected_fraction is not None:
                 fraction_for_legend = float(selected_fraction)
+    if rank_for_legend is None and rank is not None:
+        rank_for_legend = (int(rank), int(full_rank_for_legend))
     if fraction_for_legend is None and rank_fraction is not None:
         fraction_for_legend = float(rank_fraction)
-    if rank_for_legend is None:
-        config_selection = get_df_rank_selection_for_molecule(int(molecule_type))
-        if isinstance(config_selection, dict):
-            selected_rank_cfg = config_selection.get("selected_rank")
-            full_rank_cfg = config_selection.get("full_rank")
-            if selected_rank_cfg is not None and full_rank_cfg is not None:
-                rank_for_legend = (int(selected_rank_cfg), int(full_rank_cfg))
+    if rank_for_legend is None and fraction_for_legend is not None:
+        selected_rank_guess = int(round(int(full_rank_for_legend) * fraction_for_legend))
+        selected_rank_guess = max(1, min(selected_rank_guess, int(full_rank_for_legend)))
+        rank_for_legend = (selected_rank_guess, int(full_rank_for_legend))
+    if rank_for_legend is None and isinstance(config_selection, dict):
+        selected_rank_cfg = config_selection.get("selected_rank")
+        full_rank_cfg = config_selection.get("full_rank")
+        if selected_rank_cfg is not None and full_rank_cfg is not None:
+            rank_for_legend = (int(selected_rank_cfg), int(full_rank_cfg))
     if fraction_for_legend is None:
         config_fraction = get_df_rank_fraction_for_molecule(int(molecule_type))
         if config_fraction is not None:
             fraction_for_legend = float(config_fraction)
 
     if rank_for_legend is None and fraction_for_legend is not None:
-        full_rank_guess = max(1, int(molecule_type) ** 2)
-        selected_rank_guess = int(round(full_rank_guess * fraction_for_legend))
-        selected_rank_guess = max(1, min(selected_rank_guess, full_rank_guess))
-        rank_for_legend = (selected_rank_guess, full_rank_guess)
+        selected_rank_guess = int(round(int(full_rank_for_legend) * fraction_for_legend))
+        selected_rank_guess = max(1, min(selected_rank_guess, int(full_rank_for_legend)))
+        rank_for_legend = (selected_rank_guess, int(full_rank_for_legend))
 
     error_label = "error()"
     if rank_for_legend is not None:

@@ -1,0 +1,13 @@
+{
+  "bundle_name": "quration_gr_4th_new2_ftqc_diagnosis_bundle_20260421",
+  "purpose": "Share materials for investigating why quration open-source build spends a long time in opt/compile for grouped 4th(new_2) step circuits.",
+  "cases": [
+    "H3",
+    "H4"
+  ],
+  "main_findings": [
+    "Both H3 and H4 complete successfully with qret compile.",
+    "Wall-clock time is dominated by qret opt, not qret compile.",
+    "Within qret opt, ir::decompose_inst is the largest cost and ir::recursive_inliner is the second-largest cost."
+  ]
+}

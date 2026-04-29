@@ -1,0 +1,22 @@
+{
+  "magic_state_consumption_count": 91300,
+  "magic_state_consumption_depth": 71034,
+  "runtime": 401906,
+  "runtime_without_topology": 401906,
+  "qubit_volume": 0,
+  "gate_count": 401906,
+  "gate_depth": 236096,
+  "measurement_feedback_count": 91300,
+  "measurement_feedback_depth": 71034,
+  "magic_factory_count": 0,
+  "chip_cell_count": 0,
+  "source": "gr",
+  "compile_info_json": "/home/abe/Project/Evaluation_numGate_DF/artifacts/surface_code_cache/gr/decompose_only/H4_sto-3g_singlet_distance_100_charge_0_grouping__4th_new_2_/decompose_only_rot_layer_linear_floor_eta_1.000e-02_floor_1.000e-05_eps_1.593600101990e-04/step_opt.json",
+  "compile_mode": "decompose_only",
+  "target_error": 0.00015936001019904,
+  "step_time": 1.925283880931039,
+  "rotation_precision": 1e-05,
+  "generator": "decompose_only_ir",
+  "cache_key": "decompose_only:rot_layer_linear_floor_eta_1.000e-02_floor_1.000e-05:eps_1.593600101990e-04",
+  "auto_generated": true
+}

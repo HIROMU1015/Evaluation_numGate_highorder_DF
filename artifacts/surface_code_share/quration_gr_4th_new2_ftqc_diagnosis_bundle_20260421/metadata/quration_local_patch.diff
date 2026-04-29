@@ -1,0 +1,25 @@
+diff --git a/quration-core/src/qret/target/sc_ls_fixed_v0/state.h b/quration-core/src/qret/target/sc_ls_fixed_v0/state.h
+index aa93e2d..af31466 100644
+--- a/quration-core/src/qret/target/sc_ls_fixed_v0/state.h
++++ b/quration-core/src/qret/target/sc_ls_fixed_v0/state.h
+@@ -14,6 +14,7 @@
+ #include <memory>
+ #include <ostream>
+ #include <random>
++#include <span>
+ #include <stdexcept>
+ #include <unordered_map>
+ #include <unordered_set>
+diff --git a/quration-core/src/qret/target/sc_ls_fixed_v0/topology.h b/quration-core/src/qret/target/sc_ls_fixed_v0/topology.h
+index 38e20f5..10f9fed 100644
+--- a/quration-core/src/qret/target/sc_ls_fixed_v0/topology.h
++++ b/quration-core/src/qret/target/sc_ls_fixed_v0/topology.h
+@@ -108,7 +108,7 @@ public:
+ 
+     [[nodiscard]] std::string ToString(bool y_axis_downwards = true) const;
+ 
+-    constexpr auto operator<=>(const Layout2D&) const = default;
++    auto operator<=>(const Layout2D&) const = default;
+ 
+ protected:
+     void Set(std::int32_t x, std::int32_t y, char c) {

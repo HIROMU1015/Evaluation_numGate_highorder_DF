@@ -1,0 +1,2 @@
+This smaller case is a successful monolithic decompose_only run.
+No parse failure was observed.

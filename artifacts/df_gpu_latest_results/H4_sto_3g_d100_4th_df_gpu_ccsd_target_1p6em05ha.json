@@ -1,0 +1,429 @@
+{
+  "times": [
+    0.37,
+    0.373,
+    0.376,
+    0.379
+  ],
+  "errors": [
+    0.0002659731043877701,
+    0.0002745342269671228,
+    0.00028329610391175024,
+    0.00029226164213648525
+  ],
+  "info": {
+    "num_qubits": 8,
+    "energy_ref": -4.005297864879958,
+    "energy_shift": 2.29310124732,
+    "rank": 7,
+    "rank_fraction": 0.4375,
+    "tol": null,
+    "gpu_ids": [
+      "4"
+    ],
+    "requested_gpu_ids": [
+      "4"
+    ],
+    "gpu_groups": [
+      [
+        "4"
+      ],
+      [
+        "4"
+      ],
+      [
+        "4"
+      ],
+      [
+        "4"
+      ]
+    ],
+    "prefer_low_memory_gpus": true,
+    "gpu_memory_snapshot": [
+      {
+        "index": "0",
+        "memory_used_mb": 1,
+        "memory_total_mb": 40960
+      },
+      {
+        "index": "1",
+        "memory_used_mb": 1,
+        "memory_total_mb": 40960
+      },
+      {
+        "index": "2",
+        "memory_used_mb": 1,
+        "memory_total_mb": 40960
+      },
+      {
+        "index": "3",
+        "memory_used_mb": 1,
+        "memory_total_mb": 40960
+      },
+      {
+        "index": "4",
+        "memory_used_mb": 1,
+        "memory_total_mb": 40960
+      },
+      {
+        "index": "5",
+        "memory_used_mb": 1,
+        "memory_total_mb": 40960
+      },
+      {
+        "index": "6",
+        "memory_used_mb": 1,
+        "memory_total_mb": 40960
+      },
+      {
+        "index": "7",
+        "memory_used_mb": 1,
+        "memory_total_mb": 40960
+      }
+    ],
+    "chunk_splits": 1,
+    "optimization_level": 0,
+    "parallel_times": true,
+    "processes": 1,
+    "t_start": 0.37,
+    "t_end": 0.38,
+    "t_step": 0.003,
+    "num_time_points": 4,
+    "time_point_limit": null,
+    "parameterized_template": {
+      "enabled": false
+    },
+    "ground_state_info": {
+      "nelec_alpha": 2,
+      "nelec_beta": 2,
+      "n_electrons": 4,
+      "sz_value": 0.0,
+      "sector_dim": 36,
+      "full_dim": 256,
+      "restricted_dim": 36,
+      "restricted_nnz": null,
+      "hf_guess_index": 240,
+      "matrix_free": true,
+      "matrix_free_real_dtype": true,
+      "alpha_sector_dim": 6,
+      "beta_sector_dim": 6,
+      "solver": "eigsh",
+      "solver_tol": 1e-10,
+      "molecule_type": 4,
+      "num_qubits": 8,
+      "rank": 7,
+      "rank_fraction": 0.4375,
+      "hamiltonian_fingerprint": "0b7ac5a269c6a44e3f9236ff1b84a9853c85ed0d8939e7fc982ace461209527d",
+      "artifact_name": "H4_sto-3g_singlet_distance_100_charge_0_grouping_df_sector_ground_state_rank_7_rankfrac_0p4375_ccsd_target_1p6em05ha",
+      "loaded_from_artifact": false,
+      "rank_source": "config",
+      "tol": null
+    },
+    "mean_build_circuit_s": 0.04051407001679763,
+    "mean_simulate_s": 2.155378031777218,
+    "simulate_profile_per_time": [
+      {
+        "mode": "single",
+        "num_qubits": 8,
+        "input_num_instructions": 4064,
+        "optimization_level": 0,
+        "gpu_ids": [
+          "4"
+        ],
+        "execution_strategy": "baseline",
+        "aer_simulator_kwargs": {
+          "method": "statevector",
+          "device": "GPU",
+          "fusion_enable": false
+        },
+        "set_cuda_visible_devices_s": 9.800074622035027e-06,
+        "init_statevector_s": 2.5310087949037552e-05,
+        "simulator_cache_hit": false,
+        "create_simulator_s": 0.0001751398667693138,
+        "set_statevector_instruction_s": 0.0004525079857558012,
+        "compose_circuit_s": 0.0022203729022294283,
+        "append_save_statevector_s": 0.00023317895829677582,
+        "full_num_instructions": 4066,
+        "pretranspile_global_phase": 0.8556915761073558,
+        "transpile_s": 0.9434794611297548,
+        "transpiled_num_instructions": 33654,
+        "global_phase": 6.118600225314459,
+        "simulator_run_result_s": 1.640618341974914,
+        "extract_statevector_s": 0.00014460994862020016,
+        "apply_global_phase_s": 0.0006541470065712929,
+        "backend": "aer_statevector_gpu",
+        "total_s": 2.5880510800052434,
+        "time": 0.37,
+        "build_num_instructions": 4064
+      },
+      {
+        "mode": "single",
+        "num_qubits": 8,
+        "input_num_instructions": 4064,
+        "optimization_level": 0,
+        "gpu_ids": [
+          "4"
+        ],
+        "execution_strategy": "baseline",
+        "aer_simulator_kwargs": {
+          "method": "statevector",
+          "device": "GPU",
+          "fusion_enable": false
+        },
+        "set_cuda_visible_devices_s": 2.2070016711950302e-05,
+        "init_statevector_s": 2.5310087949037552e-05,
+        "simulator_cache_hit": true,
+        "create_simulator_s": 5.291076377034187e-06,
+        "set_statevector_instruction_s": 0.0003437381237745285,
+        "compose_circuit_s": 0.00193125382065773,
+        "append_save_statevector_s": 0.0001366189680993557,
+        "full_num_instructions": 4066,
+        "pretranspile_global_phase": 0.8626296159136304,
+        "transpile_s": 0.8396894049365073,
+        "transpiled_num_instructions": 33654,
+        "global_phase": 6.117265751677731,
+        "simulator_run_result_s": 1.129079887876287,
+        "extract_statevector_s": 0.00010825996287167072,
+        "apply_global_phase_s": 0.0005415880586951971,
+        "backend": "aer_statevector_gpu",
+        "total_s": 1.9719292728696018,
+        "time": 0.373,
+        "build_num_instructions": 4064
+      },
+      {
+        "mode": "single",
+        "num_qubits": 8,
+        "input_num_instructions": 4064,
+        "optimization_level": 0,
+        "gpu_ids": [
+          "4"
+        ],
+        "execution_strategy": "baseline",
+        "aer_simulator_kwargs": {
+          "method": "statevector",
+          "device": "GPU",
+          "fusion_enable": false
+        },
+        "set_cuda_visible_devices_s": 1.6819918528199196e-05,
+        "init_statevector_s": 2.9510119929909706e-05,
+        "simulator_cache_hit": true,
+        "create_simulator_s": 3.6798883229494095e-06,
+        "set_statevector_instruction_s": 0.0003368889447301626,
+        "compose_circuit_s": 0.001948053017258644,
+        "append_save_statevector_s": 0.00013722991570830345,
+        "full_num_instructions": 4066,
+        "pretranspile_global_phase": 0.869567655719905,
+        "transpile_s": 0.9760221180040389,
+        "transpiled_num_instructions": 33654,
+        "global_phase": 6.115931278040961,
+        "simulator_run_result_s": 1.0496938119176775,
+        "extract_statevector_s": 0.0001434599980711937,
+        "apply_global_phase_s": 0.002292362041771412,
+        "backend": "aer_statevector_gpu",
+        "total_s": 2.0306548341177404,
+        "time": 0.376,
+        "build_num_instructions": 4064
+      },
+      {
+        "mode": "single",
+        "num_qubits": 8,
+        "input_num_instructions": 4064,
+        "optimization_level": 0,
+        "gpu_ids": [
+          "4"
+        ],
+        "execution_strategy": "baseline",
+        "aer_simulator_kwargs": {
+          "method": "statevector",
+          "device": "GPU",
+          "fusion_enable": false
+        },
+        "set_cuda_visible_devices_s": 2.3289117962121964e-05,
+        "init_statevector_s": 2.5339890271425247e-05,
+        "simulator_cache_hit": true,
+        "create_simulator_s": 3.600027412176132e-06,
+        "set_statevector_instruction_s": 0.00027108914218842983,
+        "compose_circuit_s": 0.001973703969269991,
+        "append_save_statevector_s": 3.4439144656062126e-05,
+        "full_num_instructions": 4066,
+        "pretranspile_global_phase": 0.8765056955261858,
+        "transpile_s": 0.8649777788668871,
+        "transpiled_num_instructions": 33654,
+        "global_phase": 6.11459680440424,
+        "simulator_run_result_s": 1.1624670340679586,
+        "extract_statevector_s": 0.00022207899019122124,
+        "apply_global_phase_s": 0.0006231381557881832,
+        "backend": "aer_statevector_gpu",
+        "total_s": 2.0306851509958506,
+        "time": 0.379,
+        "build_num_instructions": 4064
+      }
+    ],
+    "mean_simulate_profile_s": {
+      "append_save_statevector_s": 0.00013536674669012427,
+      "apply_global_phase_s": 0.0010278088157065213,
+      "compose_circuit_s": 0.0020183459273539484,
+      "create_simulator_s": 4.6927714720368385e-05,
+      "extract_statevector_s": 0.00015460222493857145,
+      "init_statevector_s": 2.6367546524852514e-05,
+      "set_cuda_visible_devices_s": 1.7994781956076622e-05,
+      "set_statevector_instruction_s": 0.00035105604911223054,
+      "simulator_run_result_s": 1.2454647689592093,
+      "total_s": 2.155330084497109,
+      "transpile_s": 0.906042190734297
+    },
+    "mean_cpu_preprocess_s": 0.9086382495006546,
+    "mean_gpu_backend_s": 1.245619371184148,
+    "total_runtime_s": 8.784592042909935,
+    "rz_layer_time": 0.37
+  },
+  "rz_layers": {
+    "u_rz_count": 58414,
+    "u_rz_depth": 11884,
+    "d_rz_count": 1268,
+    "d_rz_depth": 339,
+    "total_rz_count": 59682,
+    "total_rz_depth": 12223,
+    "u_nonclifford_rz_count": 1498,
+    "u_nonclifford_rz_depth": 524,
+    "d_nonclifford_rz_count": 1016,
+    "d_nonclifford_rz_depth": 282,
+    "total_nonclifford_rz_count": 2514,
+    "total_nonclifford_rz_depth": 806,
+    "u_nonclifford_z_coloring_depth": 512,
+    "d_nonclifford_z_coloring_depth": 232,
+    "total_nonclifford_z_coloring_depth": 744,
+    "u_block_costs": [
+      {
+        "label": "one_body",
+        "rz_count": 521,
+        "rz_depth": 125,
+        "nonclifford_rz_count": 11,
+        "nonclifford_rz_depth": 4
+      },
+      {
+        "label": "df[0]",
+        "rz_count": 629,
+        "rz_depth": 143,
+        "nonclifford_rz_count": 11,
+        "nonclifford_rz_depth": 6
+      },
+      {
+        "label": "df[1]",
+        "rz_count": 764,
+        "rz_depth": 143,
+        "nonclifford_rz_count": 22,
+        "nonclifford_rz_depth": 7
+      },
+      {
+        "label": "df[2]",
+        "rz_count": 737,
+        "rz_depth": 143,
+        "nonclifford_rz_count": 8,
+        "nonclifford_rz_depth": 4
+      },
+      {
+        "label": "df[3]",
+        "rz_count": 737,
+        "rz_depth": 143,
+        "nonclifford_rz_count": 25,
+        "nonclifford_rz_depth": 8
+      },
+      {
+        "label": "df[4]",
+        "rz_count": 548,
+        "rz_depth": 125,
+        "nonclifford_rz_count": 11,
+        "nonclifford_rz_depth": 4
+      },
+      {
+        "label": "df[5]",
+        "rz_count": 737,
+        "rz_depth": 143,
+        "nonclifford_rz_count": 27,
+        "nonclifford_rz_depth": 8
+      },
+      {
+        "label": "df[6]",
+        "rz_count": 737,
+        "rz_depth": 134,
+        "nonclifford_rz_count": 27,
+        "nonclifford_rz_depth": 8
+      }
+    ],
+    "d_block_costs": [
+      {
+        "label": "one_body_D",
+        "rz_count": 8,
+        "rz_depth": 1,
+        "nonclifford_rz_count": 8,
+        "nonclifford_rz_depth": 1
+      },
+      {
+        "label": "df[0]_D",
+        "rz_count": 36,
+        "rz_depth": 14,
+        "nonclifford_rz_count": 36,
+        "nonclifford_rz_depth": 14
+      },
+      {
+        "label": "df[1]_D",
+        "rz_count": 28,
+        "rz_depth": 13,
+        "nonclifford_rz_count": 28,
+        "nonclifford_rz_depth": 13
+      },
+      {
+        "label": "df[2]_D",
+        "rz_count": 36,
+        "rz_depth": 14,
+        "nonclifford_rz_count": 36,
+        "nonclifford_rz_depth": 14
+      },
+      {
+        "label": "df[3]_D",
+        "rz_count": 28,
+        "rz_depth": 13,
+        "nonclifford_rz_count": 28,
+        "nonclifford_rz_depth": 13
+      },
+      {
+        "label": "df[4]_D",
+        "rz_count": 36,
+        "rz_depth": 14,
+        "nonclifford_rz_count": 36,
+        "nonclifford_rz_depth": 14
+      },
+      {
+        "label": "df[5]_D",
+        "rz_count": 28,
+        "rz_depth": 13,
+        "nonclifford_rz_count": 0,
+        "nonclifford_rz_depth": 0
+      },
+      {
+        "label": "df[6]_D",
+        "rz_count": 28,
+        "rz_depth": 13,
+        "nonclifford_rz_count": 0,
+        "nonclifford_rz_depth": 0
+      }
+    ],
+    "molecule_type": 4,
+    "num_qubits": 8,
+    "pf_label": "4th",
+    "time": 0.37,
+    "u_ref_rz_depth": 11884,
+    "d_ref_rz_depth": 339,
+    "total_ref_rz_depth": 12223,
+    "u_ref_rz_count": 58414,
+    "d_ref_rz_count": 1268,
+    "total_ref_rz_count": 59682
+  },
+  "fit": {
+    "exponent": 3.9218367840362274,
+    "coeff": 0.013130531642934104,
+    "avg_coeff": 0.014178296348004599,
+    "r2": 0.999999978523482
+  }
+}

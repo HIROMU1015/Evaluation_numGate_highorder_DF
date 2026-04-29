@@ -1,0 +1,5 @@
+input: step_opt_pass_02.json
+function: main
+output: step_opt_pass_03.json
+pass:
+- ir::ignore_global_phase

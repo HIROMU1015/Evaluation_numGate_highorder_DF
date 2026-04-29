@@ -1,0 +1,35 @@
+[job] start=2026-04-16T17:33:49+0900
+[surface-code][gr] H4_sto-3g_singlet_distance_100_charge_0_grouping_Operator_4th(new_2) ftqc_compile:rot_layer_linear_floor_eta_1.000e-02_floor_1.000e-05:eps_1.593600101990e-04: auto-generate start
+[surface-code][gr] H4_sto-3g_singlet_distance_100_charge_0_grouping_Operator_4th(new_2) ftqc_compile:rot_layer_linear_floor_eta_1.000e-02_floor_1.000e-05:eps_1.593600101990e-04: computed step_time=1.925284e+00
+[surface-code][gr] H4_sto-3g_singlet_distance_100_charge_0_grouping_Operator_4th(new_2) ftqc_compile:rot_layer_linear_floor_eta_1.000e-02_floor_1.000e-05:eps_1.593600101990e-04: rotation_precision=1.000000e-05 mode=layer_linear_floor
+[surface-code][gr] H4_sto-3g_singlet_distance_100_charge_0_grouping_Operator_4th(new_2) ftqc_compile:rot_layer_linear_floor_eta_1.000e-02_floor_1.000e-05:eps_1.593600101990e-04: checking surface_code binary
+[surface-code][gr] H4_sto-3g_singlet_distance_100_charge_0_grouping_Operator_4th(new_2) ftqc_compile:rot_layer_linear_floor_eta_1.000e-02_floor_1.000e-05:eps_1.593600101990e-04: surface_code binary ok (0.0s)
+[surface-code][gr] H4_sto-3g_singlet_distance_100_charge_0_grouping_Operator_4th(new_2) ftqc_compile:rot_layer_linear_floor_eta_1.000e-02_floor_1.000e-05:eps_1.593600101990e-04: building gr step circuit
+sum of all grouped terms == original Hamiltonian?
+diffinision0
+True
+validation of the group:
+[surface-code][gr] H4_sto-3g_singlet_distance_100_charge_0_grouping_Operator_4th(new_2) ftqc_compile:rot_layer_linear_floor_eta_1.000e-02_floor_1.000e-05:eps_1.593600101990e-04: built gr step circuit (0.6s)
+[surface-code][gr] H4_sto-3g_singlet_distance_100_charge_0_grouping_Operator_4th(new_2) ftqc_compile:rot_layer_linear_floor_eta_1.000e-02_floor_1.000e-05:eps_1.593600101990e-04: building basis-gate circuit
+[surface-code][gr] H4_sto-3g_singlet_distance_100_charge_0_grouping_Operator_4th(new_2) ftqc_compile:rot_layer_linear_floor_eta_1.000e-02_floor_1.000e-05:eps_1.593600101990e-04: built basis-gate circuit (2.5s)
+[surface-code][gr] H4_sto-3g_singlet_distance_100_charge_0_grouping_Operator_4th(new_2) ftqc_compile:rot_layer_linear_floor_eta_1.000e-02_floor_1.000e-05:eps_1.593600101990e-04: exporting OpenQASM2
+[surface-code][gr] H4_sto-3g_singlet_distance_100_charge_0_grouping_Operator_4th(new_2) ftqc_compile:rot_layer_linear_floor_eta_1.000e-02_floor_1.000e-05:eps_1.593600101990e-04: exported OpenQASM2 (0.2s)
+[surface-code][gr] H4_sto-3g_singlet_distance_100_charge_0_grouping_Operator_4th(new_2) ftqc_compile:rot_layer_linear_floor_eta_1.000e-02_floor_1.000e-05:eps_1.593600101990e-04: running qret parse
+[surface-code][gr] H4_sto-3g_singlet_distance_100_charge_0_grouping_Operator_4th(new_2) ftqc_compile:rot_layer_linear_floor_eta_1.000e-02_floor_1.000e-05:eps_1.593600101990e-04: finished qret parse (0.6s)
+[surface-code][gr] H4_sto-3g_singlet_distance_100_charge_0_grouping_Operator_4th(new_2) ftqc_compile:rot_layer_linear_floor_eta_1.000e-02_floor_1.000e-05:eps_1.593600101990e-04: running qret opt
+Traceback (most recent call last):
+  File "/home/abe/Project/Evaluation_numGate_DF/artifacts/surface_code_timing/run_h4_gr_4th_ftqc_compile.py", line 14, in main
+    metrics = ce._generate_surface_code_step_metrics(
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/abe/Project/Evaluation_numGate_DF/src/trotterlib/cost_extrapolation.py", line 2903, in _generate_surface_code_step_metrics
+    _run_surface_code_command_logged(
+  File "/home/abe/Project/Evaluation_numGate_DF/src/trotterlib/cost_extrapolation.py", line 2511, in _run_surface_code_command_logged
+    _run_surface_code_command(
+  File "/home/abe/Project/Evaluation_numGate_DF/src/trotterlib/cost_extrapolation.py", line 2485, in _run_surface_code_command
+    raise RuntimeError(
+RuntimeError: surface_code command failed (code=-15): /home/abe/Project/quration/build/main/qret opt --pipeline /home/abe/Project/Evaluation_numGate_DF/artifacts/surface_code_cache/gr/ftqc_compile/H4_sto-3g_singlet_distance_100_charge_0_grouping__4th_new_2_/ftqc_compile_rot_layer_linear_floor_eta_1.000e-02_floor_1.000e-05_eps_1.593600101990e-04/opt.yaml --verbose
+2026-04-16 17:33:53 - INFO  - Load IR.
+2026-04-16 17:33:53 - INFO  - Load IR.
+2026-04-16 17:33:53 - INFO  - Optimize IR.
+[job] end=2026-04-16T17:51:07+0900
+[job] elapsed_seconds=1037.9

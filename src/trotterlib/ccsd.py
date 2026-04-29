@@ -7,6 +7,7 @@ from pyscf import scf
 
 from .config import (
     DEFAULT_DF_CCSD_TARGET_ERROR_HA,
+    persist_df_rank_selection_config,
     set_df_rank_fraction_for_molecule,
 )
 
@@ -410,6 +411,7 @@ def select_rank_fraction_for_molecule(
             float(selection["selected_rank_fraction"]),
             selected_rank=int(selection["selected_rank"]),
             full_rank=int(selection["full_rank"]),
+            target_error_ha=float(selection["target_error_ha"]),
         )
     return selection
 
@@ -421,8 +423,13 @@ def populate_df_rank_fraction_config(
     thresh_range: Sequence[float] | None = None,
     use_kernel: bool = False,
     no_triples: bool = False,
+    persist_config_file: bool = True,
 ) -> dict[int, dict[str, float | int | str]]:
-    """Populate config map for multiple molecule_types and return rank metadata."""
+    """Populate config map for multiple molecule_types and return rank metadata.
+
+    By default this also writes the updated DF rank table back into
+    ``src/trotterlib/config.py``.
+    """
     rank_map: dict[int, dict[str, float | int | str]] = {}
     for molecule_type in molecule_types:
         selection = select_rank_fraction_for_molecule(
@@ -442,4 +449,6 @@ def populate_df_rank_fraction_config(
             "full_rank": full_rank,
             "rank_ratio": f"{selected_rank}/{full_rank}",
         }
+    if persist_config_file and rank_map:
+        persist_df_rank_selection_config()
     return rank_map

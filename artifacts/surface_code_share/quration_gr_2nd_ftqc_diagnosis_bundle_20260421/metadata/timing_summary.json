@@ -1,0 +1,156 @@
+{
+  "cases": {
+    "H3": {
+      "ham_name": "H3_sto-3g_triplet_1+_distance_100_charge_1_grouping",
+      "pf_label": "2nd",
+      "source": "gr",
+      "target_error": 0.00015936001019904,
+      "runtime_root": "/home/abe/Project/Evaluation_numGate_DF/artifacts/surface_code_cache/gr/ftqc_compile/H3_sto-3g_triplet_1__distance_100_charge_1_grouping__2nd/ftqc_compile_rot_layer_linear_floor_eta_1.000e-02_floor_1.000e-05_eps_1.593600101990e-04",
+      "wall_clock_seconds": 70.1,
+      "stage_seconds": {
+        "build_step_circuit": 0.1,
+        "build_basis_gate_circuit": 0.1,
+        "export_openqasm2": 0.0,
+        "qret_parse": 0.0,
+        "qret_compile": 0.4
+      },
+      "opt_passes": [
+        {
+          "index": 0,
+          "pass_name": "ir::recursive_inliner",
+          "input_path": "/home/abe/Project/Evaluation_numGate_DF/artifacts/surface_code_cache/gr/ftqc_compile/H3_sto-3g_triplet_1__distance_100_charge_1_grouping__2nd/ftqc_compile_rot_layer_linear_floor_eta_1.000e-02_floor_1.000e-05_eps_1.593600101990e-04/step_ir.json",
+          "output_path": "/home/abe/Project/Evaluation_numGate_DF/artifacts/surface_code_cache/gr/ftqc_compile/H3_sto-3g_triplet_1__distance_100_charge_1_grouping__2nd/ftqc_compile_rot_layer_linear_floor_eta_1.000e-02_floor_1.000e-05_eps_1.593600101990e-04/step_opt_pass_00.json",
+          "elapsed_seconds": 0.42681698501110077
+        },
+        {
+          "index": 1,
+          "pass_name": "ir::static_condition_pruning",
+          "input_path": "/home/abe/Project/Evaluation_numGate_DF/artifacts/surface_code_cache/gr/ftqc_compile/H3_sto-3g_triplet_1__distance_100_charge_1_grouping__2nd/ftqc_compile_rot_layer_linear_floor_eta_1.000e-02_floor_1.000e-05_eps_1.593600101990e-04/step_opt_pass_00.json",
+          "output_path": "/home/abe/Project/Evaluation_numGate_DF/artifacts/surface_code_cache/gr/ftqc_compile/H3_sto-3g_triplet_1__distance_100_charge_1_grouping__2nd/ftqc_compile_rot_layer_linear_floor_eta_1.000e-02_floor_1.000e-05_eps_1.593600101990e-04/step_opt_pass_01.json",
+          "elapsed_seconds": 0.015006030909717083
+        },
+        {
+          "index": 2,
+          "pass_name": "ir::decompose_inst",
+          "input_path": "/home/abe/Project/Evaluation_numGate_DF/artifacts/surface_code_cache/gr/ftqc_compile/H3_sto-3g_triplet_1__distance_100_charge_1_grouping__2nd/ftqc_compile_rot_layer_linear_floor_eta_1.000e-02_floor_1.000e-05_eps_1.593600101990e-04/step_opt_pass_01.json",
+          "output_path": "/home/abe/Project/Evaluation_numGate_DF/artifacts/surface_code_cache/gr/ftqc_compile/H3_sto-3g_triplet_1__distance_100_charge_1_grouping__2nd/ftqc_compile_rot_layer_linear_floor_eta_1.000e-02_floor_1.000e-05_eps_1.593600101990e-04/step_opt_pass_02.json",
+          "elapsed_seconds": 68.81669862102717
+        },
+        {
+          "index": 3,
+          "pass_name": "ir::ignore_global_phase",
+          "input_path": "/home/abe/Project/Evaluation_numGate_DF/artifacts/surface_code_cache/gr/ftqc_compile/H3_sto-3g_triplet_1__distance_100_charge_1_grouping__2nd/ftqc_compile_rot_layer_linear_floor_eta_1.000e-02_floor_1.000e-05_eps_1.593600101990e-04/step_opt_pass_02.json",
+          "output_path": "/home/abe/Project/Evaluation_numGate_DF/artifacts/surface_code_cache/gr/ftqc_compile/H3_sto-3g_triplet_1__distance_100_charge_1_grouping__2nd/ftqc_compile_rot_layer_linear_floor_eta_1.000e-02_floor_1.000e-05_eps_1.593600101990e-04/step_opt_pass_03.json",
+          "elapsed_seconds": 0.059549927012994885
+        },
+        {
+          "index": 4,
+          "pass_name": "ir::delete_consecutive_same_pauli",
+          "input_path": "/home/abe/Project/Evaluation_numGate_DF/artifacts/surface_code_cache/gr/ftqc_compile/H3_sto-3g_triplet_1__distance_100_charge_1_grouping__2nd/ftqc_compile_rot_layer_linear_floor_eta_1.000e-02_floor_1.000e-05_eps_1.593600101990e-04/step_opt_pass_03.json",
+          "output_path": "/home/abe/Project/Evaluation_numGate_DF/artifacts/surface_code_cache/gr/ftqc_compile/H3_sto-3g_triplet_1__distance_100_charge_1_grouping__2nd/ftqc_compile_rot_layer_linear_floor_eta_1.000e-02_floor_1.000e-05_eps_1.593600101990e-04/step_opt_pass_04.json",
+          "elapsed_seconds": 0.058444821974262595
+        },
+        {
+          "index": 5,
+          "pass_name": "ir::delete_opt_hint",
+          "input_path": "/home/abe/Project/Evaluation_numGate_DF/artifacts/surface_code_cache/gr/ftqc_compile/H3_sto-3g_triplet_1__distance_100_charge_1_grouping__2nd/ftqc_compile_rot_layer_linear_floor_eta_1.000e-02_floor_1.000e-05_eps_1.593600101990e-04/step_opt_pass_04.json",
+          "output_path": "/home/abe/Project/Evaluation_numGate_DF/artifacts/surface_code_cache/gr/ftqc_compile/H3_sto-3g_triplet_1__distance_100_charge_1_grouping__2nd/ftqc_compile_rot_layer_linear_floor_eta_1.000e-02_floor_1.000e-05_eps_1.593600101990e-04/step_opt.json",
+          "elapsed_seconds": 0.05586825008504093
+        }
+      ],
+      "compile_info_summary": {
+        "magic_state_consumption_count": 10708,
+        "magic_state_consumption_depth": 8748,
+        "gate_count": 55102,
+        "gate_depth": 24391,
+        "runtime_without_topology": 43473,
+        "measurement_feedback_count": 10708,
+        "measurement_feedback_depth": 8748,
+        "qubit_volume": 0
+      }
+    },
+    "H4": {
+      "ham_name": "H4_sto-3g_singlet_distance_100_charge_0_grouping",
+      "pf_label": "2nd",
+      "source": "gr",
+      "target_error": 0.00015936001019904,
+      "runtime_root": "/home/abe/Project/Evaluation_numGate_DF/artifacts/surface_code_cache/gr/ftqc_compile/H4_sto-3g_singlet_distance_100_charge_0_grouping__2nd/ftqc_compile_rot_layer_linear_floor_eta_1.000e-02_floor_1.000e-05_eps_1.593600101990e-04",
+      "wall_clock_seconds": 331.1,
+      "stage_seconds": {
+        "build_step_circuit": 0.6,
+        "build_basis_gate_circuit": 0.5,
+        "export_openqasm2": 0.0,
+        "qret_parse": 0.1,
+        "qret_compile": 1.5
+      },
+      "opt_passes": [
+        {
+          "index": 0,
+          "pass_name": "ir::recursive_inliner",
+          "input_path": "/home/abe/Project/Evaluation_numGate_DF/artifacts/surface_code_cache/gr/ftqc_compile/H4_sto-3g_singlet_distance_100_charge_0_grouping__2nd/ftqc_compile_rot_layer_linear_floor_eta_1.000e-02_floor_1.000e-05_eps_1.593600101990e-04/step_ir.json",
+          "output_path": "/home/abe/Project/Evaluation_numGate_DF/artifacts/surface_code_cache/gr/ftqc_compile/H4_sto-3g_singlet_distance_100_charge_0_grouping__2nd/ftqc_compile_rot_layer_linear_floor_eta_1.000e-02_floor_1.000e-05_eps_1.593600101990e-04/step_opt_pass_00.json",
+          "elapsed_seconds": 13.030909264925867
+        },
+        {
+          "index": 1,
+          "pass_name": "ir::static_condition_pruning",
+          "input_path": "/home/abe/Project/Evaluation_numGate_DF/artifacts/surface_code_cache/gr/ftqc_compile/H4_sto-3g_singlet_distance_100_charge_0_grouping__2nd/ftqc_compile_rot_layer_linear_floor_eta_1.000e-02_floor_1.000e-05_eps_1.593600101990e-04/step_opt_pass_00.json",
+          "output_path": "/home/abe/Project/Evaluation_numGate_DF/artifacts/surface_code_cache/gr/ftqc_compile/H4_sto-3g_singlet_distance_100_charge_0_grouping__2nd/ftqc_compile_rot_layer_linear_floor_eta_1.000e-02_floor_1.000e-05_eps_1.593600101990e-04/step_opt_pass_01.json",
+          "elapsed_seconds": 0.0591750789899379
+        },
+        {
+          "index": 2,
+          "pass_name": "ir::decompose_inst",
+          "input_path": "/home/abe/Project/Evaluation_numGate_DF/artifacts/surface_code_cache/gr/ftqc_compile/H4_sto-3g_singlet_distance_100_charge_0_grouping__2nd/ftqc_compile_rot_layer_linear_floor_eta_1.000e-02_floor_1.000e-05_eps_1.593600101990e-04/step_opt_pass_01.json",
+          "output_path": "/home/abe/Project/Evaluation_numGate_DF/artifacts/surface_code_cache/gr/ftqc_compile/H4_sto-3g_singlet_distance_100_charge_0_grouping__2nd/ftqc_compile_rot_layer_linear_floor_eta_1.000e-02_floor_1.000e-05_eps_1.593600101990e-04/step_opt_pass_02.json",
+          "elapsed_seconds": 314.5456827629823
+        },
+        {
+          "index": 3,
+          "pass_name": "ir::ignore_global_phase",
+          "input_path": "/home/abe/Project/Evaluation_numGate_DF/artifacts/surface_code_cache/gr/ftqc_compile/H4_sto-3g_singlet_distance_100_charge_0_grouping__2nd/ftqc_compile_rot_layer_linear_floor_eta_1.000e-02_floor_1.000e-05_eps_1.593600101990e-04/step_opt_pass_02.json",
+          "output_path": "/home/abe/Project/Evaluation_numGate_DF/artifacts/surface_code_cache/gr/ftqc_compile/H4_sto-3g_singlet_distance_100_charge_0_grouping__2nd/ftqc_compile_rot_layer_linear_floor_eta_1.000e-02_floor_1.000e-05_eps_1.593600101990e-04/step_opt_pass_03.json",
+          "elapsed_seconds": 0.23348992108367383
+        },
+        {
+          "index": 4,
+          "pass_name": "ir::delete_consecutive_same_pauli",
+          "input_path": "/home/abe/Project/Evaluation_numGate_DF/artifacts/surface_code_cache/gr/ftqc_compile/H4_sto-3g_singlet_distance_100_charge_0_grouping__2nd/ftqc_compile_rot_layer_linear_floor_eta_1.000e-02_floor_1.000e-05_eps_1.593600101990e-04/step_opt_pass_03.json",
+          "output_path": "/home/abe/Project/Evaluation_numGate_DF/artifacts/surface_code_cache/gr/ftqc_compile/H4_sto-3g_singlet_distance_100_charge_0_grouping__2nd/ftqc_compile_rot_layer_linear_floor_eta_1.000e-02_floor_1.000e-05_eps_1.593600101990e-04/step_opt_pass_04.json",
+          "elapsed_seconds": 0.21611489402130246
+        },
+        {
+          "index": 5,
+          "pass_name": "ir::delete_opt_hint",
+          "input_path": "/home/abe/Project/Evaluation_numGate_DF/artifacts/surface_code_cache/gr/ftqc_compile/H4_sto-3g_singlet_distance_100_charge_0_grouping__2nd/ftqc_compile_rot_layer_linear_floor_eta_1.000e-02_floor_1.000e-05_eps_1.593600101990e-04/step_opt_pass_04.json",
+          "output_path": "/home/abe/Project/Evaluation_numGate_DF/artifacts/surface_code_cache/gr/ftqc_compile/H4_sto-3g_singlet_distance_100_charge_0_grouping__2nd/ftqc_compile_rot_layer_linear_floor_eta_1.000e-02_floor_1.000e-05_eps_1.593600101990e-04/step_opt.json",
+          "elapsed_seconds": 0.2069733499083668
+        }
+      ],
+      "compile_info_summary": {
+        "magic_state_consumption_count": 35720,
+        "magic_state_consumption_depth": 26902,
+        "gate_count": 192904,
+        "gate_depth": 76124,
+        "runtime_without_topology": 148607,
+        "measurement_feedback_count": 35720,
+        "measurement_feedback_depth": 26902,
+        "qubit_volume": 0
+      }
+    }
+  },
+  "quration": {
+    "repo_root": "/home/abe/Project/quration",
+    "qret_path": "/home/abe/Project/quration/build/main/qret",
+    "commit_short": "293912c",
+    "head_commit": "293912c Merge pull request #11 from quration/dev",
+    "local_status": [
+      "M quration-core/src/qret/target/sc_ls_fixed_v0/state.h",
+      " M quration-core/src/qret/target/sc_ls_fixed_v0/topology.h"
+    ],
+    "local_patches": [
+      "quration-core/src/qret/target/sc_ls_fixed_v0/state.h: add #include <span>",
+      "quration-core/src/qret/target/sc_ls_fixed_v0/topology.h: remove constexpr from defaulted operator<=>"
+    ]
+  }
+}

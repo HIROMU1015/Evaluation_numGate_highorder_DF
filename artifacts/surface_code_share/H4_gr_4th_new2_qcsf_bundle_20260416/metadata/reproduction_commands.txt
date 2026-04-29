@@ -1,0 +1,13 @@
+Run these commands from the bundle root with your own `qcsf` binary.
+
+1. Parse OpenQASM2 into IR
+
+qcsf parse --input payload/parse_and_opt/step.qasm --output payload/parse_and_opt/step_ir.json --format OpenQASM2 --verbose
+
+2. Optimize / decompose the IR
+
+qcsf opt --input payload/parse_and_opt/step_ir.json --output payload/parse_and_opt/step_opt.json --config payload/parse_and_opt/opt.yaml --verbose
+
+3. Run the FTQC compile-info path
+
+qcsf compile --config payload/ftqc_compile/compile.yaml --verbose

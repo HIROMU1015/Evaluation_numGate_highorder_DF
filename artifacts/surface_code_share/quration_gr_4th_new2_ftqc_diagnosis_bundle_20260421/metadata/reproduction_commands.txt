@@ -1,0 +1,33 @@
+# H3 parse
+qret parse --input payload/H3/step.qasm --output payload/H3/step_ir.json --format OpenQASM2 --verbose
+
+# H3 opt (combined pipeline)
+qret opt --pipeline payload/H3/opt.yaml --verbose
+
+# H3 opt (per-pass timing, same pass order as our measurement)
+qret opt --pipeline payload/H3/opt_pass_00.yaml --verbose
+qret opt --pipeline payload/H3/opt_pass_01.yaml --verbose
+qret opt --pipeline payload/H3/opt_pass_02.yaml --verbose
+qret opt --pipeline payload/H3/opt_pass_03.yaml --verbose
+qret opt --pipeline payload/H3/opt_pass_04.yaml --verbose
+qret opt --pipeline payload/H3/opt_pass_05.yaml --verbose
+
+# H3 compile
+qret compile --pipeline payload/H3/compile.yaml --verbose
+
+# H4 parse
+qret parse --input payload/H4/step.qasm --output payload/H4/step_ir.json --format OpenQASM2 --verbose
+
+# H4 opt (combined pipeline)
+qret opt --pipeline payload/H4/opt.yaml --verbose
+
+# H4 opt (per-pass timing, same pass order as our measurement)
+qret opt --pipeline payload/H4/opt_pass_00.yaml --verbose
+qret opt --pipeline payload/H4/opt_pass_01.yaml --verbose
+qret opt --pipeline payload/H4/opt_pass_02.yaml --verbose
+qret opt --pipeline payload/H4/opt_pass_03.yaml --verbose
+qret opt --pipeline payload/H4/opt_pass_04.yaml --verbose
+qret opt --pipeline payload/H4/opt_pass_05.yaml --verbose
+
+# H4 compile
+qret compile --pipeline payload/H4/compile.yaml --verbose

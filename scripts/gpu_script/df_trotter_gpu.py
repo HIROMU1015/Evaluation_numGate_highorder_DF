@@ -433,6 +433,8 @@ def build_df_gpu_setup(
     debug_print: Callable[[str], None] = print,
 ) -> DFGPUTrotterSetup:
     pf_label = normalize_pf_label(pf_label)
+    requested_rank = rank
+    requested_rank_fraction = rank_fraction
     constant, one_body, two_body = _h_chain_integrals(
         molecule_type,
         distance=distance,
@@ -458,10 +460,17 @@ def build_df_gpu_setup(
     blocks: list[Block] = [Block.from_one_body_gaussian(build_one_body_gaussian_block(h_eff))]
     blocks.extend(Block.from_df(block) for block in build_df_blocks(model))
 
+    ground_state_rank = requested_rank
+    ground_state_rank_fraction = requested_rank_fraction
+    if ground_state_rank is None and ground_state_rank_fraction is None:
+        ground_state_rank_fraction = rank_fraction
+    if ground_state_rank_fraction is not None:
+        ground_state_rank = None
+
     energy_ref, psi0, ground_state_info = df_ground_state_physical_sector(
         molecule_type=int(molecule_type),
-        rank=rank,
-        rank_fraction=rank_fraction,
+        rank=ground_state_rank,
+        rank_fraction=ground_state_rank_fraction,
         tol=tol,
         distance=distance,
         basis=basis,
@@ -519,6 +528,17 @@ def df_trotter_energy_error_curve_sector_gpu(
         t_start=t_start,
         t_end=t_end,
         t_step=t_step,
+        rank=rank,
+        rank_fraction=rank_fraction,
+        tol=tol,
+        distance=distance,
+        basis=basis,
+        ground_state_solver_tol=ground_state_solver_tol,
+        ground_state_solver_maxiter=ground_state_solver_maxiter,
+        load_ground_state_artifact=load_ground_state,
+        save_ground_state_artifact=save_ground_state,
+        debug=debug,
+        debug_print=debug_print,
     )
     if t_step <= 0:
         raise ValueError("t_step must be positive.")
