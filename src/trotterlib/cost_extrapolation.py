@@ -8,7 +8,7 @@ import re
 import subprocess
 import time
 from collections import defaultdict
-from concurrent.futures import ProcessPoolExecutor, as_completed
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import (
     Any,
@@ -66,6 +66,11 @@ from .config import (
     SURFACE_CODE_QASM_DECOMPOSE_REPS,
     SURFACE_CODE_QCSF_PATH,
     SURFACE_CODE_GRIDSYNTH_PATH,
+    SURFACE_CODE_RZ_CALL_CACHE,
+    SURFACE_CODE_RZ_CALL_CACHE_HELPER_MAX_WORKERS,
+    SURFACE_CODE_RZ_CALL_CACHE_INLINE_BEFORE_COMPILE,
+    SURFACE_CODE_RZ_CALL_CACHE_ROUND_DIGITS,
+    SURFACE_CODE_FTQC_CALLGRAPH_FALLBACK_MAX_RZ,
     SURFACE_CODE_STEP_DF_PATH,
     SURFACE_CODE_STEP_GROUPED_ORIGINAL_PATH,
     SURFACE_CODE_STEP_GROUPED_PATH,
@@ -993,6 +998,21 @@ def normalize_surface_code_step_metrics(
         value = metrics.get(meta_key)
         if value is not None:
             normalized[meta_key] = str(value)
+    rz_call_cache = metrics.get("rz_call_cache")
+    if isinstance(rz_call_cache, Mapping):
+        normalized["rz_call_cache"] = {
+            "rz_count": _artifact_nonnegative_int(
+                rz_call_cache.get("rz_count"),
+                field="rz_call_cache.rz_count",
+                context=context,
+            ),
+            "unique_rotation_count": _artifact_nonnegative_int(
+                rz_call_cache.get("unique_rotation_count"),
+                field="rz_call_cache.unique_rotation_count",
+                context=context,
+            ),
+            "round_digits": rz_call_cache.get("round_digits"),
+        }
     if "auto_generated" in metrics:
         normalized["auto_generated"] = bool(metrics.get("auto_generated"))
     compile_mode = normalized.get("compile_mode")
@@ -1049,8 +1069,27 @@ def _surface_code_cache_key(target_error: float) -> str:
         )
     else:
         precision_tag = f"rot_{mode}"
+    cache_modifiers = []
+    if bool(SURFACE_CODE_RZ_CALL_CACHE) and SURFACE_CODE_COMPILE_MODE != "proxy":
+        round_digits = SURFACE_CODE_RZ_CALL_CACHE_ROUND_DIGITS
+        if round_digits is None:
+            cache_modifiers.append("rzcall_exact")
+        else:
+            cache_modifiers.append(f"rzcall_round_{int(round_digits)}")
+        fallback_max_rz = SURFACE_CODE_FTQC_CALLGRAPH_FALLBACK_MAX_RZ
+        if SURFACE_CODE_COMPILE_MODE not in {"decompose_only"} and fallback_max_rz:
+            cache_modifiers.append(f"callgraph_fallback_{int(fallback_max_rz)}")
+        if (
+            SURFACE_CODE_COMPILE_MODE != "decompose_only"
+            and bool(SURFACE_CODE_RZ_CALL_CACHE_INLINE_BEFORE_COMPILE)
+            and not fallback_max_rz
+        ):
+            cache_modifiers.append("post_inline")
+    modifier_tag = ""
+    if cache_modifiers:
+        modifier_tag = ":" + ":".join(cache_modifiers)
     return (
-        f"{SURFACE_CODE_COMPILE_MODE}:{precision_tag}:eps_{target_error:.12e}"
+        f"{SURFACE_CODE_COMPILE_MODE}{modifier_tag}:{precision_tag}:eps_{target_error:.12e}"
     )
 
 
@@ -2274,6 +2313,94 @@ def _surface_code_qasm_text_from_circuit(
     return _surface_code_qasm_text_from_basis_circuit(qc_basis)
 
 
+_SURFACE_CODE_RZ_QASM_LINE_RE = re.compile(
+    r"^(?P<indent>\s*)rz\((?P<theta>[^;\n]+)\)\s+"
+    r"(?P<target>[A-Za-z_][A-Za-z0-9_]*(?:\[\d+\])?)\s*;\s*$"
+)
+
+
+def _surface_code_eval_qasm_angle(theta: str) -> float:
+    """OpenQASM2 の単純な角度式を数値化する。"""
+    return float(
+        eval(
+            str(theta).replace("^", "**"),
+            {"__builtins__": {}},
+            {"pi": math.pi},
+        )
+    )
+
+
+def _surface_code_rz_call_cache_key(theta: str) -> str:
+    """RZ helper 共有用の角度 key を返す。"""
+    theta_text = str(theta).strip()
+    round_digits = SURFACE_CODE_RZ_CALL_CACHE_ROUND_DIGITS
+    if round_digits is None:
+        return theta_text
+    value = _surface_code_eval_qasm_angle(theta_text)
+    return f"{value:.{int(round_digits)}g}"
+
+
+def _surface_code_rewrite_qasm_rz_as_calls(qasm_text: str) -> Tuple[str, Dict[str, Any]]:
+    """OpenQASM2 の RZ を角度ごとの helper gate 呼び出しに置き換える。"""
+    lines = str(qasm_text).splitlines()
+    rewritten_lines: List[str] = []
+    key_to_gate: Dict[str, Dict[str, Any]] = {}
+    rz_count = 0
+
+    for line in lines:
+        match = _SURFACE_CODE_RZ_QASM_LINE_RE.match(line)
+        if match is None:
+            rewritten_lines.append(line)
+            continue
+        theta = match.group("theta").strip()
+        target = match.group("target")
+        key = _surface_code_rz_call_cache_key(theta)
+        entry = key_to_gate.get(key)
+        if entry is None:
+            gate_name = f"sc_rz_{len(key_to_gate):04d}"
+            entry = {
+                "gate_name": gate_name,
+                "function_name": f"__import_from_openqasm2__{gate_name}()",
+                "theta": theta,
+                "key": key,
+                "count": 0,
+            }
+            key_to_gate[key] = entry
+        entry["count"] = int(entry["count"]) + 1
+        rz_count += 1
+        rewritten_lines.append(f"{match.group('indent')}{entry['gate_name']} {target};")
+
+    if rz_count == 0:
+        return str(qasm_text), {
+            "enabled": False,
+            "reason": "no_rz",
+            "rz_count": 0,
+            "unique_rotation_count": 0,
+            "helpers": [],
+        }
+
+    gate_definitions = [
+        f"gate {entry['gate_name']} a {{ rz({entry['theta']}) a; }}"
+        for entry in key_to_gate.values()
+    ]
+    insert_index = 0
+    for index, line in enumerate(rewritten_lines):
+        stripped = line.strip()
+        if stripped.startswith("OPENQASM ") or stripped.startswith("include "):
+            insert_index = index + 1
+            continue
+        break
+    rewritten_lines[insert_index:insert_index] = gate_definitions
+    metadata = {
+        "enabled": True,
+        "rz_count": int(rz_count),
+        "unique_rotation_count": int(len(key_to_gate)),
+        "round_digits": SURFACE_CODE_RZ_CALL_CACHE_ROUND_DIGITS,
+        "helpers": list(key_to_gate.values()),
+    }
+    return "\n".join(rewritten_lines) + "\n", metadata
+
+
 def _surface_code_cli_name(binary_path: str | Path) -> str:
     """surface-code CLI の実バイナリ名を返す。"""
     name = Path(binary_path).expanduser().resolve().name.lower()
@@ -2288,6 +2415,7 @@ def _surface_code_opt_pipeline_yaml(
     opt_path: str | Path,
     cli_name: str,
     passes: Sequence[str] | None = None,
+    entry_name: str = "main",
 ) -> str:
     """CLI 差分を吸収した opt pipeline YAML を返す。"""
     entry_key = "function" if str(cli_name) == "qret" else "circuit"
@@ -2295,7 +2423,7 @@ def _surface_code_opt_pipeline_yaml(
     return "\n".join(
         [
             f"input: {ir_path}",
-            f"{entry_key}: main",
+            f"{entry_key}: {entry_name}",
             f"output: {opt_path}",
             "pass:",
             *[f"- {name}" for name in effective_passes],
@@ -2440,6 +2568,415 @@ def _surface_code_run_opt_logged(
         json.dump(summary, f, ensure_ascii=True, indent=2)
     _surface_code_log(
         f"saved opt pass timings -> {timings_path.name}",
+        source=source,
+        ham_name=ham_name,
+        pf_label=pf_label,
+        target_error=target_error,
+    )
+    return summary
+
+
+def _surface_code_ir_circuit_by_name(
+    module: Mapping[str, Any],
+    circuit_name: str,
+    *,
+    context: str,
+) -> Mapping[str, Any]:
+    """IR module から指定 circuit/function を取り出す。"""
+    circuit_list = module.get("circuit_list")
+    if not isinstance(circuit_list, list):
+        raise ValueError(f"Invalid IR JSON in {context}: missing circuit_list")
+    for circuit in circuit_list:
+        if isinstance(circuit, Mapping) and circuit.get("name") == circuit_name:
+            return circuit
+    raise ValueError(f"Circuit '{circuit_name}' not found in {context}")
+
+
+def _surface_code_run_rz_helper_parallel_decompose(
+    *,
+    qcsf_path: str | Path,
+    runtime_root: Path,
+    ir_path: str | Path,
+    cache_dir: Path,
+    cli_name: str,
+    helpers: Sequence[Mapping[str, Any]],
+    helper_passes: Sequence[str],
+    rotation_precision: float,
+    max_workers: int,
+) -> Tuple[Path, List[Dict[str, Any]]]:
+    """RZ helper を最小 IR 単位で並列分解し、元の module にマージする。"""
+    if str(cli_name) != "qret":
+        raise ValueError("parallel RZ helper decomposition is only supported for qret")
+
+    ir_path = Path(ir_path).expanduser().resolve()
+    with ir_path.open("r", encoding="utf-8") as f:
+        base_module = json.load(f)
+    circuit_list = base_module.get("circuit_list")
+    if not isinstance(circuit_list, list):
+        raise ValueError(f"Invalid IR JSON: missing circuit_list in {ir_path}")
+
+    helper_names = [str(helper["function_name"]) for helper in helpers]
+    helper_name_set = set(helper_names)
+    helper_circuits = {
+        str(circuit["name"]): circuit
+        for circuit in circuit_list
+        if isinstance(circuit, Mapping) and str(circuit.get("name")) in helper_name_set
+    }
+    missing = [name for name in helper_names if name not in helper_circuits]
+    if missing:
+        raise ValueError(
+            "RZ helper function(s) missing in parsed IR: " + ", ".join(missing[:5])
+        )
+
+    workers = max(1, min(int(max_workers), len(helpers)))
+    worker_root = cache_dir / "parallel_helpers"
+    worker_root.mkdir(parents=True, exist_ok=True)
+
+    def _decompose_one(index: int, helper: Mapping[str, Any]) -> Dict[str, Any]:
+        function_name = str(helper["function_name"])
+        work_dir = worker_root / f"helper_{index:04d}"
+        work_dir.mkdir(parents=True, exist_ok=True)
+        input_path = work_dir / "input.json"
+        output_path = work_dir / "output.json"
+        pass_yaml = work_dir / "opt.yaml"
+        mini_module = dict(base_module)
+        mini_module["circuit_list"] = [helper_circuits[function_name]]
+        with input_path.open("w", encoding="utf-8") as f:
+            json.dump(mini_module, f, ensure_ascii=True, separators=(",", ":"))
+        pass_yaml.write_text(
+            _surface_code_opt_pipeline_yaml(
+                ir_path=input_path,
+                opt_path=output_path,
+                cli_name=cli_name,
+                passes=helper_passes,
+                entry_name=function_name,
+            ),
+            encoding="utf-8",
+        )
+        started = time.perf_counter()
+        _run_surface_code_command(
+            [
+                str(qcsf_path),
+                "opt",
+                "--pipeline",
+                str(pass_yaml),
+                "--verbose",
+            ],
+            runtime_root=work_dir,
+            rotation_precision=rotation_precision,
+        )
+        elapsed = time.perf_counter() - started
+        with output_path.open("r", encoding="utf-8") as f:
+            decomposed_module = json.load(f)
+        decomposed = _surface_code_ir_circuit_by_name(
+            decomposed_module,
+            function_name,
+            context=str(output_path),
+        )
+        return {
+            "kind": "rz_helper",
+            "index": int(index),
+            "function_name": function_name,
+            "gate_name": helper.get("gate_name"),
+            "theta": helper.get("theta"),
+            "count": int(helper.get("count", 0)),
+            "passes": list(helper_passes),
+            "input_path": str(input_path),
+            "output_path": str(output_path),
+            "elapsed_seconds": float(elapsed),
+            "circuit": decomposed,
+        }
+
+    decomposed_by_name: Dict[str, Mapping[str, Any]] = {}
+    pass_timings: List[Dict[str, Any]] = []
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        futures = {
+            executor.submit(_decompose_one, index, helper): (index, helper)
+            for index, helper in enumerate(helpers)
+        }
+        for future in as_completed(futures):
+            result = future.result()
+            function_name = str(result["function_name"])
+            decomposed_by_name[function_name] = result.pop("circuit")
+            pass_timings.append(result)
+
+    pass_timings.sort(key=lambda item: int(item["index"]))
+    merged_module = dict(base_module)
+    merged_circuits = []
+    for circuit in circuit_list:
+        if isinstance(circuit, Mapping):
+            replacement = decomposed_by_name.get(str(circuit.get("name")))
+            if replacement is not None:
+                merged_circuits.append(replacement)
+                continue
+        merged_circuits.append(circuit)
+    merged_module["circuit_list"] = merged_circuits
+    merged_path = cache_dir / "step_rz_cache_merged.json"
+    with merged_path.open("w", encoding="utf-8") as f:
+        json.dump(merged_module, f, ensure_ascii=True, separators=(",", ":"))
+    return merged_path, pass_timings
+
+
+def _surface_code_run_rz_call_cached_opt_logged(
+    *,
+    qcsf_path: str | Path,
+    runtime_root: Path,
+    ir_path: str | Path,
+    opt_path: str | Path,
+    cli_name: str,
+    source: str,
+    ham_name: str,
+    pf_label: PFLabel,
+    target_error: float,
+    rotation_precision: float,
+    rz_call_cache: Mapping[str, Any],
+    inline_main: bool | None = None,
+) -> Dict[str, Any]:
+    """RZ helper 関数を先に分解し、main 側では重い分解 pass を避ける。"""
+    helpers = [
+        dict(item)
+        for item in rz_call_cache.get("helpers", [])
+        if isinstance(item, Mapping)
+    ]
+    timings_path = runtime_root / "opt_pass_timings.json"
+    cache_dir = runtime_root / "rz_call_cache"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    metadata_path = runtime_root / "rz_call_cache_metadata.json"
+    with metadata_path.open("w", encoding="utf-8") as f:
+        json.dump(rz_call_cache, f, ensure_ascii=True, indent=2)
+
+    if str(cli_name) != "qret" or not helpers:
+        return _surface_code_run_opt_logged(
+            qcsf_path=qcsf_path,
+            runtime_root=runtime_root,
+            ir_path=ir_path,
+            opt_path=opt_path,
+            cli_name=cli_name,
+            source=source,
+            ham_name=ham_name,
+            pf_label=pf_label,
+            target_error=target_error,
+            rotation_precision=rotation_precision,
+        )
+
+    helper_passes = [
+        "ir::decompose_inst",
+        "ir::ignore_global_phase",
+        "ir::delete_consecutive_same_pauli",
+        "ir::delete_opt_hint",
+    ]
+    if inline_main is None:
+        inline_main = (
+            SURFACE_CODE_COMPILE_MODE != "decompose_only"
+            and bool(SURFACE_CODE_RZ_CALL_CACHE_INLINE_BEFORE_COMPILE)
+        )
+    main_passes = [name for name in _surface_code_opt_passes() if name != "ir::decompose_inst"]
+    if not bool(inline_main):
+        main_passes = [name for name in main_passes if name != "ir::recursive_inliner"]
+
+    _surface_code_log(
+        "using RZ call cache "
+        f"({rz_call_cache.get('rz_count')} rz -> "
+        f"{rz_call_cache.get('unique_rotation_count')} helper functions)",
+        source=source,
+        ham_name=ham_name,
+        pf_label=pf_label,
+        target_error=target_error,
+    )
+
+    total_started = time.perf_counter()
+    pass_timings: List[Dict[str, Any]] = []
+    current_input = Path(ir_path)
+    temp_paths = [cache_dir / "step_rz_cache_a.json", cache_dir / "step_rz_cache_b.json"]
+
+    def _write_summary(current_running: Dict[str, Any] | None) -> None:
+        with timings_path.open("w", encoding="utf-8") as f:
+            json.dump(
+                {
+                    "trace_mode": "rz_call_cache",
+                    "total_elapsed_seconds": float(time.perf_counter() - total_started),
+                    "rz_call_cache": {
+                        "metadata_path": str(metadata_path),
+                        "rz_count": int(rz_call_cache.get("rz_count", 0)),
+                        "unique_rotation_count": int(
+                            rz_call_cache.get("unique_rotation_count", 0)
+                        ),
+                        "round_digits": rz_call_cache.get("round_digits"),
+                    },
+                    "current_running": current_running,
+                    "passes": pass_timings,
+                },
+                f,
+                ensure_ascii=True,
+                indent=2,
+            )
+
+    helper_workers = max(1, int(SURFACE_CODE_RZ_CALL_CACHE_HELPER_MAX_WORKERS))
+    if helper_workers > 1 and len(helpers) > 1:
+        _write_summary(
+            {
+                "kind": "rz_helper_parallel",
+                "helper_count": int(len(helpers)),
+                "workers": int(min(helper_workers, len(helpers))),
+                "input_path": str(current_input),
+            }
+        )
+        _surface_code_log(
+            f"running {cli_name} opt RZ helpers in parallel "
+            f"({len(helpers)} helpers, workers={min(helper_workers, len(helpers))})",
+            source=source,
+            ham_name=ham_name,
+            pf_label=pf_label,
+            target_error=target_error,
+        )
+        t0 = time.perf_counter()
+        current_input, parallel_timings = _surface_code_run_rz_helper_parallel_decompose(
+            qcsf_path=qcsf_path,
+            runtime_root=runtime_root,
+            ir_path=current_input,
+            cache_dir=cache_dir,
+            cli_name=cli_name,
+            helpers=helpers,
+            helper_passes=helper_passes,
+            rotation_precision=rotation_precision,
+            max_workers=helper_workers,
+        )
+        elapsed = time.perf_counter() - t0
+        pass_timings.extend(parallel_timings)
+        _surface_code_log(
+            f"finished {cli_name} opt RZ helpers in parallel ({elapsed:.1f}s)",
+            source=source,
+            ham_name=ham_name,
+            pf_label=pf_label,
+            target_error=target_error,
+        )
+        _write_summary(None)
+    else:
+        for index, helper in enumerate(helpers):
+            function_name = str(helper["function_name"])
+            pass_output = temp_paths[index % 2]
+            pass_yaml = cache_dir / f"rz_helper_{index:04d}.yaml"
+            pass_yaml.write_text(
+                _surface_code_opt_pipeline_yaml(
+                    ir_path=current_input,
+                    opt_path=pass_output,
+                    cli_name=cli_name,
+                    passes=helper_passes,
+                    entry_name=function_name,
+                ),
+                encoding="utf-8",
+            )
+            _write_summary(
+                {
+                    "kind": "rz_helper",
+                    "index": int(index),
+                    "function_name": function_name,
+                    "input_path": str(current_input),
+                    "output_path": str(pass_output),
+                }
+            )
+            elapsed = _run_surface_code_command_logged(
+                [
+                    str(qcsf_path),
+                    "opt",
+                    "--pipeline",
+                    str(pass_yaml),
+                    "--verbose",
+                ],
+                runtime_root=runtime_root,
+                source=source,
+                ham_name=ham_name,
+                pf_label=pf_label,
+                target_error=target_error,
+                stage_name=(
+                    f"{cli_name} opt rz helper {index + 1}/{len(helpers)} "
+                    f"{function_name}"
+                ),
+                rotation_precision=rotation_precision,
+            )
+            pass_timings.append(
+                {
+                    "kind": "rz_helper",
+                    "index": int(index),
+                    "function_name": function_name,
+                    "gate_name": helper.get("gate_name"),
+                    "theta": helper.get("theta"),
+                    "count": int(helper.get("count", 0)),
+                    "passes": helper_passes,
+                    "input_path": str(current_input),
+                    "output_path": str(pass_output),
+                    "elapsed_seconds": float(elapsed),
+                }
+            )
+            if current_input in temp_paths and current_input != pass_output:
+                current_input.unlink(missing_ok=True)
+            current_input = pass_output
+            _write_summary(None)
+
+    main_yaml = cache_dir / "main_after_rz_helpers.yaml"
+    main_yaml.write_text(
+        _surface_code_opt_pipeline_yaml(
+            ir_path=current_input,
+            opt_path=opt_path,
+            cli_name=cli_name,
+            passes=main_passes,
+            entry_name="main",
+        ),
+        encoding="utf-8",
+    )
+    _write_summary(
+        {
+            "kind": "main_cleanup",
+            "passes": main_passes,
+            "input_path": str(current_input),
+            "output_path": str(opt_path),
+        }
+    )
+    elapsed = _run_surface_code_command_logged(
+        [
+            str(qcsf_path),
+            "opt",
+            "--pipeline",
+            str(main_yaml),
+            "--verbose",
+        ],
+        runtime_root=runtime_root,
+        source=source,
+        ham_name=ham_name,
+        pf_label=pf_label,
+        target_error=target_error,
+        stage_name=f"{cli_name} opt main cleanup after rz cache",
+        rotation_precision=rotation_precision,
+    )
+    pass_timings.append(
+        {
+            "kind": "main_cleanup",
+            "index": int(len(pass_timings)),
+            "passes": main_passes,
+            "input_path": str(current_input),
+            "output_path": str(Path(opt_path)),
+            "elapsed_seconds": float(elapsed),
+        }
+    )
+    if current_input in temp_paths:
+        current_input.unlink(missing_ok=True)
+
+    summary = {
+        "trace_mode": "rz_call_cache",
+        "total_elapsed_seconds": float(time.perf_counter() - total_started),
+        "rz_call_cache": {
+            "metadata_path": str(metadata_path),
+            "rz_count": int(rz_call_cache.get("rz_count", 0)),
+            "unique_rotation_count": int(rz_call_cache.get("unique_rotation_count", 0)),
+            "round_digits": rz_call_cache.get("round_digits"),
+        },
+        "current_running": None,
+        "passes": pass_timings,
+    }
+    with timings_path.open("w", encoding="utf-8") as f:
+        json.dump(summary, f, ensure_ascii=True, indent=2)
+    _surface_code_log(
+        f"saved RZ call-cache opt timings -> {timings_path.name}",
         source=source,
         ham_name=ham_name,
         pf_label=pf_label,
@@ -3010,11 +3547,65 @@ def _generate_surface_code_step_metrics(
     ir_path = runtime_root / "step_ir.json"
     opt_path = runtime_root / "step_opt.json"
     cli_name = _surface_code_cli_name(qcsf_path)
+    rz_call_cache_metadata: Dict[str, Any] | None = None
+    use_ftqc_callgraph_fallback = False
+    if bool(SURFACE_CODE_RZ_CALL_CACHE) and cli_name == "qret":
+        qasm_text, rz_call_cache_metadata = _surface_code_rewrite_qasm_rz_as_calls(
+            qasm_text
+        )
+        if rz_call_cache_metadata.get("enabled"):
+            _surface_code_log(
+                "rewrote RZ rotations as helper calls "
+                f"({rz_call_cache_metadata['rz_count']} rz -> "
+                f"{rz_call_cache_metadata['unique_rotation_count']} helpers)",
+                source=source,
+                ham_name=ham_name,
+                pf_label=pf_label,
+                target_error=target_error,
+            )
+            fallback_max_rz = SURFACE_CODE_FTQC_CALLGRAPH_FALLBACK_MAX_RZ
+            use_ftqc_callgraph_fallback = (
+                SURFACE_CODE_COMPILE_MODE not in {"proxy", "decompose_only"}
+                and bool(fallback_max_rz)
+                and int(rz_call_cache_metadata.get("rz_count", 0))
+                > int(fallback_max_rz)
+            )
+            if use_ftqc_callgraph_fallback:
+                _surface_code_log(
+                    "RZ count exceeds FTQC compile fallback threshold; "
+                    "using callgraph metrics after helper decomposition "
+                    f"(rz={rz_call_cache_metadata['rz_count']}, "
+                    f"threshold={int(fallback_max_rz)})",
+                    source=source,
+                    ham_name=ham_name,
+                    pf_label=pf_label,
+                    target_error=target_error,
+                )
+    elif bool(SURFACE_CODE_RZ_CALL_CACHE):
+        _surface_code_log(
+            "RZ call cache is only enabled for qret; using regular opt flow",
+            source=source,
+            ham_name=ham_name,
+            pf_label=pf_label,
+            target_error=target_error,
+        )
     compile_output_path = (
         runtime_root / "step_sc_ls_fixed_v0.json"
         if cli_name == "qret"
         else runtime_root / "step.asm"
     )
+    if (
+        SURFACE_CODE_COMPILE_MODE not in {"proxy", "decompose_only"}
+        and SURFACE_CODE_COMPILE_SKIP_OUTPUT
+    ):
+        compile_output_path = Path(os.devnull)
+        _surface_code_log(
+            f"compile output redirected to {compile_output_path}",
+            source=source,
+            ham_name=ham_name,
+            pf_label=pf_label,
+            target_error=target_error,
+        )
     compile_info_path = runtime_root / "compile_info.json"
     qasm_path.write_text(qasm_text, encoding="utf-8")
 
@@ -3038,18 +3629,76 @@ def _generate_surface_code_step_metrics(
         stage_name=f"{cli_name} parse",
         rotation_precision=rotation_precision,
     )
-    _surface_code_run_opt_logged(
-        qcsf_path=qcsf_path,
-        runtime_root=runtime_root,
-        ir_path=ir_path,
-        opt_path=opt_path,
-        cli_name=cli_name,
-        source=source,
-        ham_name=ham_name,
-        pf_label=pf_label,
-        target_error=target_error,
-        rotation_precision=float(rotation_precision),
-    )
+    if rz_call_cache_metadata is not None and rz_call_cache_metadata.get("enabled"):
+        _surface_code_run_rz_call_cached_opt_logged(
+            qcsf_path=qcsf_path,
+            runtime_root=runtime_root,
+            ir_path=ir_path,
+            opt_path=opt_path,
+            cli_name=cli_name,
+            source=source,
+            ham_name=ham_name,
+            pf_label=pf_label,
+            target_error=target_error,
+            rotation_precision=float(rotation_precision),
+            rz_call_cache=rz_call_cache_metadata,
+            inline_main=(
+                False
+                if use_ftqc_callgraph_fallback
+                else (
+                    SURFACE_CODE_COMPILE_MODE != "decompose_only"
+                    and bool(SURFACE_CODE_RZ_CALL_CACHE_INLINE_BEFORE_COMPILE)
+                )
+            ),
+        )
+    else:
+        _surface_code_run_opt_logged(
+            qcsf_path=qcsf_path,
+            runtime_root=runtime_root,
+            ir_path=ir_path,
+            opt_path=opt_path,
+            cli_name=cli_name,
+            source=source,
+            ham_name=ham_name,
+            pf_label=pf_label,
+            target_error=target_error,
+            rotation_precision=float(rotation_precision),
+        )
+    if use_ftqc_callgraph_fallback:
+        _surface_code_log(
+            "using callgraph estimator instead of qret compile",
+            source=source,
+            ham_name=ham_name,
+            pf_label=pf_label,
+            target_error=target_error,
+        )
+        metrics = _surface_code_decompose_only_step_metrics(
+            opt_path,
+            ham_name=ham_name,
+            pf_label=pf_label,
+            source=source,
+            target_error=float(target_error),
+            step_time=float(step_time),
+            rotation_precision=float(rotation_precision),
+        )
+        metrics["generator"] = "ftqc_callgraph_fallback"
+        metrics["compile_mode"] = SURFACE_CODE_COMPILE_MODE
+        metrics["cache_key"] = _surface_code_cache_key(float(target_error))
+        if rz_call_cache_metadata is not None and rz_call_cache_metadata.get("enabled"):
+            metrics["rz_call_cache"] = {
+                "rz_count": int(rz_call_cache_metadata.get("rz_count", 0)),
+                "unique_rotation_count": int(
+                    rz_call_cache_metadata.get("unique_rotation_count", 0)
+                ),
+                "round_digits": rz_call_cache_metadata.get("round_digits"),
+            }
+        normalized = normalize_surface_code_step_metrics(
+            metrics,
+            context=f"{ham_name}_Operator_{pf_label}.ftqc_callgraph_fallback",
+        )
+        with (runtime_root / "step_metrics.json").open("w", encoding="utf-8") as f:
+            json.dump(normalized, f, ensure_ascii=True, indent=2)
+        return normalized
     if SURFACE_CODE_COMPILE_MODE == "decompose_only":
         _surface_code_log(
             "using decomposed IR estimator",
@@ -3108,6 +3757,14 @@ def _generate_surface_code_step_metrics(
     metrics["source"] = str(source)
     metrics["compile_mode"] = SURFACE_CODE_COMPILE_MODE
     metrics["rotation_precision"] = float(rotation_precision)
+    if rz_call_cache_metadata is not None and rz_call_cache_metadata.get("enabled"):
+        metrics["rz_call_cache"] = {
+            "rz_count": int(rz_call_cache_metadata.get("rz_count", 0)),
+            "unique_rotation_count": int(
+                rz_call_cache_metadata.get("unique_rotation_count", 0)
+            ),
+            "round_digits": rz_call_cache_metadata.get("round_digits"),
+        }
     normalized = normalize_surface_code_step_metrics(
         metrics,
         context=f"{ham_name}_Operator_{pf_label}.generated_surface_code_step",
@@ -3179,6 +3836,40 @@ def _load_surface_code_step_metrics_from_runtime_cache(
         source=source,
         target_error=float(target_error),
     )
+    step_metrics_path = runtime_root / "step_metrics.json"
+    if not compile_info_path.exists() and step_metrics_path.exists():
+        _surface_code_log(
+            "runtime cache hit -> importing step_metrics.json",
+            source=source,
+            ham_name=ham_name,
+            pf_label=pf_label,
+            target_error=target_error,
+        )
+        try:
+            with step_metrics_path.open("r", encoding="utf-8") as f:
+                cached_metrics = json.load(f)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"Invalid runtime step metrics JSON: {step_metrics_path}") from exc
+        metrics = dict(cached_metrics)
+        metrics["target_error"] = float(target_error)
+        metrics.setdefault("cache_key", _surface_code_cache_key(float(target_error)))
+        metrics.setdefault("source", str(source))
+        metrics.setdefault("compile_mode", SURFACE_CODE_COMPILE_MODE)
+        metrics.setdefault("auto_generated", True)
+        normalized = normalize_surface_code_step_metrics(
+            metrics,
+            context=f"{ham_name}_Operator_{pf_label}.runtime_surface_code_step_metrics",
+        )
+        if not attach_to_artifact:
+            return normalized
+        return _attach_surface_code_step_metrics(
+            ham_name,
+            pf_label,
+            normalized,
+            source=source,
+            use_original=use_original,
+        )
+
     if not compile_info_path.exists():
         if runtime_root.exists():
             _surface_code_log(
@@ -3211,6 +3902,22 @@ def _load_surface_code_step_metrics_from_runtime_cache(
     metrics["auto_generated"] = True
     metrics["source"] = str(source)
     metrics["compile_mode"] = SURFACE_CODE_COMPILE_MODE
+    rz_call_cache_metadata_path = runtime_root / "rz_call_cache_metadata.json"
+    if rz_call_cache_metadata_path.exists():
+        try:
+            rz_call_cache_metadata = json.loads(
+                rz_call_cache_metadata_path.read_text(encoding="utf-8")
+            )
+        except json.JSONDecodeError:
+            rz_call_cache_metadata = None
+        if isinstance(rz_call_cache_metadata, Mapping):
+            metrics["rz_call_cache"] = {
+                "rz_count": int(rz_call_cache_metadata.get("rz_count", 0)),
+                "unique_rotation_count": int(
+                    rz_call_cache_metadata.get("unique_rotation_count", 0)
+                ),
+                "round_digits": rz_call_cache_metadata.get("round_digits"),
+            }
     metrics.setdefault(
         "rotation_precision",
         _surface_code_rotation_precision(
